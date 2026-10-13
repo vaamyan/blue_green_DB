@@ -203,3 +203,8 @@ reviewed, tested revision with a manual approval gate.
 All names, emails, salaries, dates, and departments are fictional. The
 database is for demonstrating deployment behaviour, not for storing real
 employee information.
+
+
+docker compose -p bluegreen-dev up -d
+docker exec -it bluegreen-dev-postgres psql -U bluegreen -d bluegreen_dev
+docker compose -p bluegreen-dev down
