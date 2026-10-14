@@ -4,7 +4,7 @@ services:
     container_name: bluegreen-dev-postgres
     restart: unless-stopped
     environment:
-      POSTGRES_DB: bluegreen_dev
+      POSTGRES_DB: bluegreen
       POSTGRES_USER: bluegreen
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Define POSTGRES_PASSWORD in .env}
     ports:
@@ -12,7 +12,7 @@ services:
     volumes:
       - postgres_dev_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U bluegreen -d bluegreen_dev"]
+      test: ["CMD-SHELL", "pg_isready -U bluegreen -d bluegreen"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -34,5 +34,4 @@ services:
 volumes:
   pgadmin_data:
   postgres_dev_data:
-
 

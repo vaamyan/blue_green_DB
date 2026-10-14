@@ -205,6 +205,10 @@ database is for demonstrating deployment behaviour, not for storing real
 employee information.
 
 
-docker compose -p bluegreen-dev up -d
-docker exec -it bluegreen-dev-postgres psql -U bluegreen -d bluegreen_dev
-docker compose -p bluegreen-dev down
+# Remember
+docker compose -p bluegreen up -d
+docker exec -it bluegreen-dev-postgres psql -U bluegreen -d bluegreen
+docker compose -p bluegreen down
+docker compose -p bluegreen-dev down --volumes --remove-orphans # borrar todo
+
+
