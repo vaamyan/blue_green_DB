@@ -53,7 +53,16 @@ Kubernetes is out of scope for the initial milestone.
     │   ├── create_workspace1.sql
     │   └── create_workspace2.sql
     └── workspaces
-        └── create_demo_objects.sql
+        ├── objects
+        │   ├── create_type_employee_status.sql
+        │   ├── create_table_employees.sql
+        │   ├── create_table_export_cfg_tables.sql
+        │   └── ... (one file per object)
+        ├── seed_audit_log.sql
+        ├── seed_department_summary.sql
+        ├── seed_employees.sql
+        ├── seed_export_cfg_tables.sql
+        └── seed_private_notes.sql
 ```
 
 ## Requirements
@@ -112,36 +121,79 @@ At the `psql` prompt, run the commands you need, then exit with `\q`:
 \q
 ```
 
-## Demo objects
+## Workspace objects
 
-After creating the workspaces, run the object script once in each
-database, connecting as its owner role:
+Each SQL file in `database/workspaces/objects/` creates one PostgreSQL
+object and follows the `create_<object_type>_<object_name>.sql` naming
+pattern. Names are not numbered by default. The `apply_workspace_objects.sh`
+manifest handles actual DDL dependencies, such as creating types before
+tables and functions before triggers. Use it from the repository root:
 
 ```bash
-docker compose exec -T postgres psql -U workspace1 -d workspace1 \
-  -v workspace=workspace1 -f /dev/stdin \
-  < database/workspaces/create_demo_objects.sql
-
-docker compose exec -T postgres psql -U workspace2 -d workspace2 \
-  -v workspace=workspace2 -f /dev/stdin \
-  < database/workspaces/create_demo_objects.sql
+./apply_workspace_objects.sh workspace1
+./apply_workspace_objects.sh workspace2
 ```
 
-The script creates examples of tables, a partitioned table and
-partition, indexes, constraints, sequences, views, a materialized view,
-user-defined types, a function, a procedure, a trigger, a rule, an
-aggregate, an operator, a row-level security policy, text-search
-objects, extended statistics, and a publication.
+The files cover tables, a partitioned table and partition, indexes,
+constraints, sequences, views, a materialized view, user-defined types,
+functions, a procedure, a trigger, a rule, an aggregate, an operator, a
+row-level security policy, text-search objects, extended statistics, and
+a publication. PostgreSQL creates the range type's associated
+multirange as part of its parent type definition.
 
-The publication defines which table could be replicated. For logical
-replication to work, PostgreSQL must also be configured with
-`wal_level = logical` and a subscriber must be set up. Table owners
-normally bypass their own RLS policies; the example does not enable
-`FORCE ROW LEVEL SECURITY`.
+The publication defines which table could be replicated. Logical
+replication also requires `wal_level = logical` and a subscriber. Table
+owners normally bypass their own RLS policies; the example does not
+enable `FORCE ROW LEVEL SECURITY`.
 
-The script does not create event triggers or foreign-data wrappers,
-which require superuser privileges. Extensions depend on the installed
-packages and each extension's trust settings.
+The scripts do not create event triggers or foreign-data wrappers, which
+require superuser privileges. Extensions depend on installed packages
+and their trust settings.
+
+## Export configuration
+
+`export_cfg_tables` stores per-table metadata for a future Blue-Green
+export/import process. Its `export_order` is the order for processing
+rows, while `copy_mode` identifies whether a table contains workspace
+configuration (`CONFIG`), data copied from the source schema selected by
+Blue-Green (`BLUEGREEN_SOURCE`), or is excluded (`NONE`). `source_schema`
+can override the runtime source schema; when it is `NULL`, the exporter
+chooses the source. `trigger_names` and `sequence_names` record related
+objects so a later exporter can account for them.
+
+This table is configuration only; the export/import engine is a later
+milestone. The seed currently registers itself first, followed by
+`employees`, `audit_log`, and `private_notes`. Review the policy before
+using the metadata for a real migration.
+
+## Workspace data
+
+Each data seed has its own file named `seed_<table_name>.sql`. The
+materialized view refresh is in `seed_department_summary.sql`. All seed
+files are repeatable. Run them in this order: export configuration,
+employees, audit log, private notes, then the materialized view refresh.
+The order ensures the export policy is available first and derived data
+is refreshed after its source data is loaded.
+
+Run all seeds in each workspace as its owner role:
+
+```bash
+for seed in seed_export_cfg_tables.sql seed_employees.sql seed_audit_log.sql seed_private_notes.sql seed_department_summary.sql; do
+  docker compose exec -T postgres psql -X -v ON_ERROR_STOP=1 --single-transaction \
+    -U workspace1 -d workspace1 -v workspace=workspace1 \
+    -f /dev/stdin < "database/workspaces/$seed"
+done
+
+for seed in seed_export_cfg_tables.sql seed_employees.sql seed_audit_log.sql seed_private_notes.sql seed_department_summary.sql; do
+  docker compose exec -T postgres psql -X -v ON_ERROR_STOP=1 --single-transaction \
+    -U workspace2 -d workspace2 -v workspace=workspace2 \
+    -f /dev/stdin < "database/workspaces/$seed"
+done
+```
+
+To run only one seed, substitute its filename in the command. For
+example, use `seed_employees.sql` to load employee rows and align its
+sequence, or `seed_audit_log.sql` to load audit events.
 
 ## Queries to check the environment
 
@@ -180,7 +232,7 @@ Production, promote the same immutable artifact that passed UAT.
 
 - [x] Choose PostgreSQL and prepare the local database foundation.
 - [x] Add manual scripts for workspace roles and databases.
-- [x] Add PostgreSQL demo objects for each workspace.
+- [x] Add PostgreSQL object examples for each workspace.
 - [ ] Create Blue and Green versions of the Python API.
 - [ ] Add health checks and integration tests.
 - [ ] Implement traffic switching and rollback.
@@ -188,7 +240,7 @@ Production, promote the same immutable artifact that passed UAT.
 - [ ] Add approval-gated Production promotion.
 - [ ] Document migrations and data preservation between versions.
 
-## Demo data
+## Synthetic data
 
 Use synthetic data only. Do not store real employer, customer, or
 personal information in this lab.
@@ -325,9 +377,7 @@ Create a fresh environment again with:
 docker compose up -d
 ```
 
-Compose does not create `workspace1`, `workspace2`, or their demo
-objects. You can run the SQL scripts manually as described above, or use
-the repository script to automate the setup:
+Compose does not create `workspace1`, `workspace2`, or their objects. You can run the SQL scripts manually as described above, or use the repository script to automate the setup:
 
 ```bash
 ./setup_workspaces.sh
@@ -335,8 +385,9 @@ the repository script to automate the setup:
 
 It starts the Compose services, waits for PostgreSQL, creates either
 workspace that is missing, prompts for passwords only when a role does
-not already have one, and creates the demo objects. Existing workspaces
-and demo objects are skipped. The script stops if it finds a role or
-database without its matching counterpart so that it does not make a
+not already have one, creates missing workspace objects, then applies each per-table seed file
+to both workspaces. Existing workspace objects are skipped; the seed
+files are safe to run again. The script stops if it finds a role
+or database without its matching counterpart so that it does not make a
 partial setup harder to recover. It does not stop or purge containers or
 volumes.

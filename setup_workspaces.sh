@@ -96,27 +96,34 @@ if [[ -s "$password_sql" ]]; then
   admin_psql -d postgres -f /dev/stdin < "$password_sql"
 fi
 
-ensure_demo_objects() {
-  local workspace="$1"
-  local demo_table_exists
-
-  demo_table_exists="$(docker compose exec -T postgres psql -X -v ON_ERROR_STOP=1 \
-    -U "$workspace" -d "$workspace" -Atqc \
-    "SELECT to_regclass('${workspace}.demo_employees') IS NOT NULL;")"
-
-  if [[ "$demo_table_exists" == t ]]; then
-    printf '%s demo objects already exist; skipping.\n' "$workspace"
-    return
-  fi
-
-  printf 'Creating demo objects in %s...\n' "$workspace"
-  docker compose exec -T postgres psql -X -v ON_ERROR_STOP=1 --single-transaction \
-    -U "$workspace" -d "$workspace" -v "workspace=$workspace" \
-    -f /dev/stdin < database/workspaces/create_demo_objects.sql
+ensure_workspace_objects() {
+  ./apply_workspace_objects.sh "$1"
 }
 
-ensure_demo_objects workspace1
-ensure_demo_objects workspace2
+ensure_workspace_objects workspace1
+ensure_workspace_objects workspace2
+
+seed_workspace_data() {
+  local workspace="$1"
+  local seed_file
+  local seed_files=(
+    seed_export_cfg_tables.sql
+    seed_employees.sql
+    seed_audit_log.sql
+    seed_private_notes.sql
+    seed_department_summary.sql
+  )
+
+  for seed_file in "${seed_files[@]}"; do
+    printf 'Applying %s to %s...\n' "$seed_file" "$workspace"
+    docker compose exec -T postgres psql -X -v ON_ERROR_STOP=1 --single-transaction \
+      -U "$workspace" -d "$workspace" -v "workspace=$workspace" \
+      -f /dev/stdin < "database/workspaces/$seed_file"
+  done
+}
+
+seed_workspace_data workspace1
+seed_workspace_data workspace2
 
 printf '\nWorkspace setup is complete. Current services:\n'
 docker compose ps
