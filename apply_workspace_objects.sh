@@ -13,58 +13,60 @@ esac
 command -v docker >/dev/null 2>&1 || { printf 'Error: Docker is not installed or is not on PATH.\n' >&2; exit 1; }
 
 sentinels="$(docker compose exec -T postgres psql -X -v ON_ERROR_STOP=1 -U "$workspace" -d "$workspace" -Atqc \
-  "SELECT (CASE WHEN to_regclass('employees') IS NOT NULL THEN '1' ELSE '0' END) || (CASE WHEN to_regclass('export_cfg_tables') IS NOT NULL THEN '1' ELSE '0' END);")"
+  "SELECT (CASE WHEN to_regclass('table_1') IS NOT NULL THEN '1' ELSE '0' END) || (CASE WHEN to_regclass('table_5') IS NOT NULL THEN '1' ELSE '0' END);")"
 if [[ "$sentinels" == 11 ]]; then
   printf '%s workspace objects already exist; skipping.\n' "$workspace"
   exit 0
 elif [[ "$sentinels" != 00 ]]; then
-  printf 'Error: %s has a partial object setup (employees/export_cfg_tables). Review it manually.\n' "$workspace" >&2
+  printf 'Error: %s has a partial object setup (table_1/table_5). Review it manually.\n' "$workspace" >&2
   exit 1
 fi
 
-# This manifest records DDL dependencies. EXPORT_CFG_TABLES records runtime data-copy order.
+# This manifest records DDL dependencies. table_5.column_2 stores data-copy order.
 files=(
-  create_type_employee_status.sql
-  create_domain_positive_integer.sql
-  create_type_employee_key.sql
-  create_type_integer_range.sql
-  create_sequence_employee_id.sql
-  create_sequence_audit_event_id.sql
-  create_sequence_private_note_id.sql
-  create_table_employees.sql
-  create_table_audit_log.sql
-  create_table_private_notes.sql
-  create_table_export_cfg_tables.sql
-  create_constraint_employees_primary_key.sql
-  create_constraint_employees_name_check.sql
-  create_constraint_audit_log_primary_key.sql
-  create_constraint_private_notes_primary_key.sql
-  create_constraint_export_cfg_tables_primary_key.sql
-  create_constraint_export_cfg_tables_order_unique.sql
-  create_constraint_export_cfg_tables_copy_mode.sql
-  create_constraint_export_cfg_tables_source_schema.sql
-  create_sequence_ownership_employee_id.sql
-  create_sequence_ownership_audit_event_id.sql
-  create_sequence_ownership_private_note_id.sql
-  create_partition_audit_log_2020_2030.sql
-  create_function_employee_label.sql
-  create_function_touch_updated_at.sql
-  create_function_employee_sum_state.sql
-  create_trigger_employees_touch_updated_at.sql
-  create_procedure_set_employee_active.sql
-  create_policy_private_notes_rls.sql
-  create_policy_private_notes_owner.sql
-  create_view_active_employees.sql
-  create_materialized_view_department_summary.sql
-  create_view_department_employee_counts.sql
-  create_rule_department_counts_insert.sql
-  create_aggregate_employee_sum.sql
-  create_operator_integer_equality.sql
-  create_text_search_dictionary_simple.sql
-  create_text_search_configuration_simple.sql
-  create_text_search_mapping_simple.sql
-  create_statistics_employees_department_status.sql
-  create_publication_employee.sql
+  create_type_1.sql
+  create_domain_1.sql
+  create_type_2.sql
+  create_type_3.sql
+  create_sequence_1.sql
+  create_sequence_2.sql
+  create_sequence_3.sql
+  create_table_1.sql
+  create_table_2.sql
+  create_table_4.sql
+  create_constraint_1.sql
+  create_constraint_2.sql
+  create_constraint_3.sql
+  create_constraint_4.sql
+  create_sequence_ownership_1.sql
+  create_sequence_ownership_2.sql
+  create_sequence_ownership_3.sql
+  create_table_3.sql
+  create_table_5.sql
+  create_constraint_5.sql
+  create_constraint_6.sql
+  create_constraint_7.sql
+  create_constraint_8.sql
+  create_function_1.sql
+  create_function_2.sql
+  create_function_3.sql
+  create_trigger_1.sql
+  create_procedure_1.sql
+  create_row_level_security_1.sql
+  create_policy_1.sql
+  create_index_1.sql
+  create_index_2.sql
+  create_view_1.sql
+  create_materialized_view_1.sql
+  create_view_2.sql
+  create_rule_1.sql
+  create_aggregate_1.sql
+  create_operator_1.sql
+  create_text_search_dictionary_1.sql
+  create_text_search_configuration_1.sql
+  create_text_search_mapping_1.sql
+  create_statistics_1.sql
+  create_publication_1.sql
 )
 
 for file in "${files[@]}"; do

@@ -48,21 +48,22 @@ Kubernetes is out of scope for the initial milestone.
 ├── docker-compose.yml
 ├── README.md
 ├── setup_workspaces.sh
+├── apply_workspace_objects.sh
 └── database
     ├── admin
     │   ├── create_workspace1.sql
     │   └── create_workspace2.sql
     └── workspaces
         ├── objects
-        │   ├── create_type_employee_status.sql
-        │   ├── create_table_employees.sql
-        │   ├── create_table_export_cfg_tables.sql
+        │   ├── create_type_1.sql
+        │   ├── create_table_1.sql
+        │   ├── create_table_5.sql
         │   └── ... (one file per object)
-        ├── seed_audit_log.sql
-        ├── seed_department_summary.sql
-        ├── seed_employees.sql
-        ├── seed_export_cfg_tables.sql
-        └── seed_private_notes.sql
+        ├── seed_table_2.sql
+        ├── seed_materialized_view_1.sql
+        ├── seed_table_1.sql
+        ├── seed_table_5.sql
+        └── seed_table_4.sql
 ```
 
 ## Requirements
@@ -124,9 +125,9 @@ At the `psql` prompt, run the commands you need, then exit with `\q`:
 ## Workspace objects
 
 Each SQL file in `database/workspaces/objects/` creates one PostgreSQL
-object and follows the `create_<object_type>_<object_name>.sql` naming
-pattern. Names are not numbered by default. The `apply_workspace_objects.sh`
-manifest handles actual DDL dependencies, such as creating types before
+object and follows the `create_<object_type>_<number>.sql` naming
+pattern. Object names and filenames use stable numbers within each object
+type. The `apply_workspace_objects.sh` manifest handles actual DDL dependencies, such as creating types before
 tables and functions before triggers. Use it from the repository root:
 
 ```bash
@@ -134,12 +135,15 @@ tables and functions before triggers. Use it from the repository root:
 ./apply_workspace_objects.sh workspace2
 ```
 
-The files cover tables, a partitioned table and partition, indexes,
-constraints, sequences, views, a materialized view, user-defined types,
-functions, a procedure, a trigger, a rule, an aggregate, an operator, a
-row-level security policy, text-search objects, extended statistics, and
-a publication. PostgreSQL creates the range type's associated
-multirange as part of its parent type definition.
+The files use generic numbered identifiers for all user-created objects
+and columns. `table_1` holds the primary fixture rows; `table_2` is a
+partitioned table with `table_3` as its partition; `table_4` holds
+role-scoped rows; and `table_5` stores export configuration. The object
+set includes indexes, constraints, sequences, views, a materialized
+view, user-defined types, a domain, functions, a procedure, a trigger, a
+rule, an aggregate, an operator, a row-level security policy, text-search
+objects, extended statistics, and a publication. PostgreSQL creates the
+range type's associated multirange as part of the parent type.
 
 The publication defines which table could be replicated. Logical
 replication also requires `wal_level = logical` and a subscriber. Table
@@ -152,39 +156,38 @@ and their trust settings.
 
 ## Export configuration
 
-`export_cfg_tables` stores per-table metadata for a future Blue-Green
-export/import process. Its `export_order` is the order for processing
-rows, while `copy_mode` identifies whether a table contains workspace
-configuration (`CONFIG`), data copied from the source schema selected by
-Blue-Green (`BLUEGREEN_SOURCE`), or is excluded (`NONE`). `source_schema`
-can override the runtime source schema; when it is `NULL`, the exporter
-chooses the source. `trigger_names` and `sequence_names` record related
-objects so a later exporter can account for them.
+`table_5` stores per-table metadata for a future Blue-Green
+export/import process. `column_1` identifies a table, `column_2` sets
+its processing order, and `column_3` selects configuration copy
+(`CONFIG`), source-schema copy (`BLUEGREEN_SOURCE`), or exclusion
+(`NONE`). `column_4` optionally overrides the source schema. `column_5`
+and `column_6` list related triggers and sequences; `column_7` enables
+or disables a row, and `column_8` stores a note.
 
 This table is configuration only; the export/import engine is a later
-milestone. The seed currently registers itself first, followed by
-`employees`, `audit_log`, and `private_notes`. Review the policy before
-using the metadata for a real migration.
+milestone. Its seed registers `table_5` first, followed by `table_1`,
+`table_2`, and `table_4`. Rows for `table_2` are routed to `table_3` by
+partitioning.
 
 ## Workspace data
 
-Each data seed has its own file named `seed_<table_name>.sql`. The
-materialized view refresh is in `seed_department_summary.sql`. All seed
-files are repeatable. Run them in this order: export configuration,
-employees, audit log, private notes, then the materialized view refresh.
-The order ensures the export policy is available first and derived data
-is refreshed after its source data is loaded.
+Each data seed has its own file named `seed_table_<number>.sql`. The
+materialized view refresh is in `seed_materialized_view_1.sql`. All seed
+files are repeatable. Run them in this order: `seed_table_5.sql`,
+`seed_table_1.sql`, `seed_table_2.sql`, `seed_table_4.sql`, then
+`seed_materialized_view_1.sql`. This makes export policy available first
+and refreshes derived data after its source rows are loaded.
 
 Run all seeds in each workspace as its owner role:
 
 ```bash
-for seed in seed_export_cfg_tables.sql seed_employees.sql seed_audit_log.sql seed_private_notes.sql seed_department_summary.sql; do
+for seed in seed_table_5.sql seed_table_1.sql seed_table_2.sql seed_table_4.sql seed_materialized_view_1.sql; do
   docker compose exec -T postgres psql -X -v ON_ERROR_STOP=1 --single-transaction \
     -U workspace1 -d workspace1 -v workspace=workspace1 \
     -f /dev/stdin < "database/workspaces/$seed"
 done
 
-for seed in seed_export_cfg_tables.sql seed_employees.sql seed_audit_log.sql seed_private_notes.sql seed_department_summary.sql; do
+for seed in seed_table_5.sql seed_table_1.sql seed_table_2.sql seed_table_4.sql seed_materialized_view_1.sql; do
   docker compose exec -T postgres psql -X -v ON_ERROR_STOP=1 --single-transaction \
     -U workspace2 -d workspace2 -v workspace=workspace2 \
     -f /dev/stdin < "database/workspaces/$seed"
@@ -192,8 +195,8 @@ done
 ```
 
 To run only one seed, substitute its filename in the command. For
-example, use `seed_employees.sql` to load employee rows and align its
-sequence, or `seed_audit_log.sql` to load audit events.
+example, use `seed_table_1.sql` to load `table_1` rows and align
+`sequence_1`, or `seed_table_2.sql` to load `table_2` rows.
 
 ## Queries to check the environment
 

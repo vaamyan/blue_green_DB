@@ -107,11 +107,11 @@ seed_workspace_data() {
   local workspace="$1"
   local seed_file
   local seed_files=(
-    seed_export_cfg_tables.sql
-    seed_employees.sql
-    seed_audit_log.sql
-    seed_private_notes.sql
-    seed_department_summary.sql
+    seed_table_5.sql
+    seed_table_1.sql
+    seed_table_2.sql
+    seed_table_4.sql
+    seed_materialized_view_1.sql
   )
 
   for seed_file in "${seed_files[@]}"; do
