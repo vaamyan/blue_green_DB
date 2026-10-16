@@ -96,34 +96,8 @@ if [[ -s "$password_sql" ]]; then
   admin_psql -d postgres -f /dev/stdin < "$password_sql"
 fi
 
-ensure_workspace_objects() {
-  ./apply_workspace_objects.sh "$1"
-}
-
-ensure_workspace_objects workspace1
-ensure_workspace_objects workspace2
-
-seed_workspace_data() {
-  local workspace="$1"
-  local seed_file
-  local seed_files=(
-    seed_table_5.sql
-    seed_table_1.sql
-    seed_table_2.sql
-    seed_table_4.sql
-    seed_materialized_view_1.sql
-  )
-
-  for seed_file in "${seed_files[@]}"; do
-    printf 'Applying %s to %s...\n' "$seed_file" "$workspace"
-    docker compose exec -T postgres psql -X -v ON_ERROR_STOP=1 --single-transaction \
-      -U "$workspace" -d "$workspace" -v "workspace=$workspace" \
-      -f /dev/stdin < "database/workspaces/$seed_file"
-  done
-}
-
-seed_workspace_data workspace1
-seed_workspace_data workspace2
+./create_initial_content.sh workspace1
+./create_initial_content.sh workspace2
 
 printf '\nWorkspace setup is complete. Current services:\n'
 docker compose ps

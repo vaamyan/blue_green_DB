@@ -48,22 +48,24 @@ Kubernetes is out of scope for the initial milestone.
 ├── docker-compose.yml
 ├── README.md
 ├── setup_workspaces.sh
-├── apply_workspace_objects.sh
+├── create_initial_content.sh
 └── database
     ├── admin
     │   ├── create_workspace1.sql
     │   └── create_workspace2.sql
     └── workspaces
-        ├── objects
-        │   ├── create_type_1.sql
-        │   ├── create_table_1.sql
-        │   ├── create_table_5.sql
-        │   └── ... (one file per object)
-        ├── seed_table_2.sql
-        ├── seed_materialized_view_1.sql
-        ├── seed_table_1.sql
-        ├── seed_table_5.sql
-        └── seed_table_4.sql
+        └── initial_content
+            ├── objects
+            │   ├── create_type_1.sql
+            │   ├── create_table_1.sql
+            │   ├── create_table_5.sql
+            │   └── ... (one file per object)
+            └── seeds
+                ├── seed_table_1.sql
+                ├── seed_table_2.sql
+                ├── seed_table_4.sql
+                ├── seed_table_5.sql
+                └── seed_materialized_view_1.sql
 ```
 
 ## Requirements
@@ -124,15 +126,15 @@ At the `psql` prompt, run the commands you need, then exit with `\q`:
 
 ## Workspace objects
 
-Each SQL file in `database/workspaces/objects/` creates one PostgreSQL
-object and follows the `create_<object_type>_<number>.sql` naming
-pattern. Object names and filenames use stable numbers within each object
-type. The `apply_workspace_objects.sh` manifest handles actual DDL dependencies, such as creating types before
-tables and functions before triggers. Use it from the repository root:
+Each SQL file in `database/workspaces/initial_content/objects/` creates
+one PostgreSQL object and follows the `create_<object_type>_<number>.sql`
+naming pattern. Object names and filenames use stable numbers within each
+object type. `create_initial_content.sh` applies the baseline DDL in
+dependency order, then loads its repeatable seeds. Use it from the repository root:
 
 ```bash
-./apply_workspace_objects.sh workspace1
-./apply_workspace_objects.sh workspace2
+./create_initial_content.sh workspace1
+./create_initial_content.sh workspace2
 ```
 
 The files use generic numbered identifiers for all user-created objects
@@ -171,9 +173,12 @@ partitioning.
 
 ## Workspace data
 
-Each data seed has its own file named `seed_table_<number>.sql`. The
-materialized view refresh is in `seed_materialized_view_1.sql`. All seed
-files are repeatable. Run them in this order: `seed_table_5.sql`,
+The initial baseline is grouped under
+`database/workspaces/initial_content/`. Its DDL remains one object per
+file in `objects/`, and each table's fixture data stays in a separate
+file in `seeds/`. The seed files use names such as
+`seed_table_<number>.sql`; the materialized view refresh is in
+`seed_materialized_view_1.sql`. All seed files are repeatable. Run them in this order: `seed_table_5.sql`,
 `seed_table_1.sql`, `seed_table_2.sql`, `seed_table_4.sql`, then
 `seed_materialized_view_1.sql`. This makes export policy available first
 and refreshes derived data after its source rows are loaded.
@@ -184,13 +189,13 @@ Run all seeds in each workspace as its owner role:
 for seed in seed_table_5.sql seed_table_1.sql seed_table_2.sql seed_table_4.sql seed_materialized_view_1.sql; do
   docker compose exec -T postgres psql -X -v ON_ERROR_STOP=1 --single-transaction \
     -U workspace1 -d workspace1 -v workspace=workspace1 \
-    -f /dev/stdin < "database/workspaces/$seed"
+    -f /dev/stdin < "database/workspaces/initial_content/seeds/$seed"
 done
 
 for seed in seed_table_5.sql seed_table_1.sql seed_table_2.sql seed_table_4.sql seed_materialized_view_1.sql; do
   docker compose exec -T postgres psql -X -v ON_ERROR_STOP=1 --single-transaction \
     -U workspace2 -d workspace2 -v workspace=workspace2 \
-    -f /dev/stdin < "database/workspaces/$seed"
+    -f /dev/stdin < "database/workspaces/initial_content/seeds/$seed"
 done
 ```
 
@@ -380,7 +385,7 @@ Create a fresh environment again with:
 docker compose up -d
 ```
 
-Compose does not create `workspace1`, `workspace2`, or their objects. You can run the SQL scripts manually as described above, or use the repository script to automate the setup:
+Compose does not create `workspace1`, `workspace2`, or their initial content. Run the setup script to create the workspaces and apply the baseline:
 
 ```bash
 ./setup_workspaces.sh
@@ -388,9 +393,9 @@ Compose does not create `workspace1`, `workspace2`, or their objects. You can ru
 
 It starts the Compose services, waits for PostgreSQL, creates either
 workspace that is missing, prompts for passwords only when a role does
-not already have one, creates missing workspace objects, then applies each per-table seed file
-to both workspaces. Existing workspace objects are skipped; the seed
-files are safe to run again. The script stops if it finds a role
+not already have one, then calls `create_initial_content.sh` for each
+workspace to apply the baseline DDL and per-table seeds. Existing
+workspace objects are skipped; the seed files are safe to run again. The script stops if it finds a role
 or database without its matching counterpart so that it does not make a
 partial setup harder to recover. It does not stop or purge containers or
 volumes.
