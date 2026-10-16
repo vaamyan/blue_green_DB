@@ -48,11 +48,11 @@ Kubernetes is out of scope for the initial milestone.
 ├── docker-compose.yml
 ├── README.md
 ├── setup_workspaces.sh
+├── create_workspace.sh
 ├── create_initial_content.sh
 └── database
     ├── admin
-    │   ├── create_workspace1.sql
-    │   └── create_workspace2.sql
+    │   └── create_bluegreen_users.sql
     ├── deploy
     │   ├── ddl
     │   │   ├── aggregate/
@@ -100,55 +100,56 @@ cp .env.example .env
 `.env` contains the PostgreSQL administrator and pgAdmin passwords. Do
 not commit it to the repository.
 
+Run the bootstrap to create the user registries before adding
+authorized Jenkins usernames:
+
+```bash
+./setup_workspaces.sh
+```
+
 ## Roles and workspaces
 
 Compose starts PostgreSQL with the `bluegreen` database and the
-`bluegreen` administrator role. This role is a superuser and can create
-databases and administer the cluster. The other two workspaces are
-created manually when needed:
-
-| Workspace | Database | Login role | Permissions |
-|---|---|---|---|
-| Administrator | `bluegreen` | `bluegreen` | Administers the cluster and can create databases. |
-| Workspace 1 | `workspace1` | `workspace1` | Owns its database and schema; cannot create databases or administer other roles. |
-| Workspace 2 | `workspace2` | `workspace2` | Owns its database and schema; cannot create databases or administer other roles. |
-
-Run the scripts in `database/admin/` once per workspace, as `bluegreen`,
-from the repository root while the container is running:
+`bluegreen` superuser role. The bootstrap creates `BLUEGREEN_USERS` and
+`ACTIVE_USERS` in the `bluegreen` database. Both tables have manually
+assigned `user_id` and `user_name` values.
+`user_id` is unique but is not a primary key, and `user_name` is unique so
+the Jenkins lookup is unambiguous. Add both values when registering a user:
 
 ```bash
-docker compose exec -T postgres psql -U bluegreen -d postgres \
-  -f /dev/stdin < database/admin/create_workspace1.sql
-
-docker compose exec -T postgres psql -U bluegreen -d postgres \
-  -f /dev/stdin < database/admin/create_workspace2.sql
+docker compose exec -T postgres psql -U bluegreen -d bluegreen \
+  -c "INSERT INTO bluegreen_users (user_id, user_name) VALUES (1001, 'your_jenkins_username') ON CONFLICT DO NOTHING;"
 ```
 
-Set each role's password interactively so it is not stored in the SQL
-files or shell history:
+A Jenkins job can request a workspace by passing the registered username
+and a workspace name to the creation script:
 
 ```bash
-docker compose exec -it postgres psql -U bluegreen -d postgres
+./create_workspace.sh your_jenkins_username workspace_1
 ```
 
-At the `psql` prompt, run the commands you need, then exit with `\q`:
+The script checks the username in `BLUEGREEN_USERS`, creates a matching
+login role, database, and schema, then applies the DDL and DML from
+`database/deploy/`. Workspace roles cannot create databases or administer
+other roles. Once deployment succeeds, the script copies that user's ID
+and name into `ACTIVE_USERS`; a user already in that table cannot create a
+second workspace. The generated role has no password set yet; Jenkins runs
+the deployment using `bluegreen` and switches to the workspace role.
+Password provisioning for application connections will be a separate step.
 
-```text
-\password workspace1
-\password workspace2
-\q
-```
+For this first version, the username is supplied as a script argument.
+Jenkins must eventually populate it from the authenticated build identity;
+a free-form build parameter alone does not prove who started the job.
 
 ## Workspace objects
 
 Each SQL file in `database/deploy/ddl/<object_type>/` creates
 one PostgreSQL object and follows the `<object_type>_<number>.sql`
 naming pattern. Sequence and sequence-ownership scripts are grouped together
-under `sequence/` for later consolidation. Object names and filenames use stable numbers within each
-object type. `create_initial_content.sh` applies the baseline DDL in
-dependency order. The full setup script, `setup_workspaces.sh`, applies the
-DDL to both workspaces and then runs the repeatable DML from
-`database/deploy/dml/`.
+under `sequence/` for later consolidation. Object names and filenames use
+stable numbers within each object type. `create_initial_content.sh` applies
+the baseline DDL in dependency order. `create_workspace.sh` then runs the
+repeatable DML from `database/deploy/dml/` for the requested workspace.
 
 The files use generic numbered identifiers for all user-created objects
 and columns. `table_1` holds the primary fixture rows; `table_2` is a
@@ -193,18 +194,19 @@ followed by `table_1.sql`, `table_2.sql`, and `table_4.sql`;
 repeatable. Rows inserted into `table_2` are routed to its partition,
 `table_3`.
 
-Run the complete initial DDL and DML setup for both workspaces:
+Create a registered user's workspace and apply all initial DDL and DML:
 
 ```bash
-./setup_workspaces.sh
+./create_workspace.sh your_jenkins_username workspace_1
 ```
 
-To run an individual DML file, use its name under `database/deploy/dml/`
-with the matching workspace role. For example:
+To run an individual DML file, use `bluegreen` and switch to the target
+workspace role. For example:
 
 ```bash
 docker compose exec -T postgres psql -X -v ON_ERROR_STOP=1 --single-transaction \
-  -U workspace1 -d workspace1 -v workspace=workspace1 \
+  -U bluegreen -d workspace_1 -v workspace=workspace_1 \
+  -c 'SET ROLE "workspace_1"' \
   -f /dev/stdin < database/deploy/dml/table_1.sql
 ```
 
@@ -221,7 +223,7 @@ Check the roles and whether they can create databases:
 
 ```bash
 docker compose exec postgres psql -U bluegreen -d postgres \
-  -c "SELECT rolname, rolsuper, rolcreatedb, (rolsuper OR rolcreatedb) AS can_create_databases FROM pg_roles WHERE rolname IN ('bluegreen', 'workspace1', 'workspace2') ORDER BY rolname;"
+  -c "SELECT rolname, rolsuper, rolcreatedb, (rolsuper OR rolcreatedb) AS can_create_databases FROM pg_roles WHERE rolname = 'bluegreen' OR rolname LIKE 'workspace_%' ORDER BY rolname;"
 ```
 
 ## Database and deployment design principles
@@ -244,7 +246,7 @@ Production, promote the same immutable artifact that passed UAT.
 ## Planned milestones
 
 - [x] Choose PostgreSQL and prepare the local database foundation.
-- [x] Add manual scripts for workspace roles and databases.
+- [x] Add a registry-backed workspace creation prototype.
 - [x] Add PostgreSQL object examples for each workspace.
 - [ ] Create Blue and Green versions of the Python API.
 - [ ] Add health checks and integration tests.
@@ -309,17 +311,12 @@ Enable **Save password** if you want pgAdmin to remember it, then select
 PostgreSQL service over the Docker Compose network. `localhost` would
 refer to the pgAdmin container itself.
 
-After creating the workspaces and setting their passwords, register
-each one the same way if you want a separate pgAdmin connection:
-
-| Display name | Maintenance database | Username | Password |
-|---|---|---|---|
-| `Workspace 1` | `workspace1` | `workspace1` | The password assigned to the `workspace1` role |
-| `Workspace 2` | `workspace2` | `workspace2` | The password assigned to the `workspace2` role |
-
-Keep the host as `postgres` and the port as `5432` for both. Workspace
-roles are limited to their own databases; use the `BlueGreen Admin`
-connection for cluster administration and database creation.
+After creating a workspace and setting a password for its role, you can
+register another pgAdmin server for it. Use the generated workspace name
+(for example, `workspace_1`) as both the maintenance database and username.
+Keep the host as `postgres` and port as `5432`. Workspace roles are
+limited to their own database; use the `BlueGreen Admin` connection for
+cluster administration and database creation.
 
 ### 2. View logs
 
@@ -345,7 +342,7 @@ docker compose exec -it postgres psql -U bluegreen -d bluegreen
 Connect to a workspace:
 
 ```bash
-docker compose exec -it postgres psql -U workspace1 -d workspace1
+docker compose exec -it postgres psql -U workspace_1 -d workspace_1
 ```
 
 Inside `psql`, run `\q` to exit.
@@ -390,18 +387,18 @@ Create a fresh environment again with:
 docker compose up -d
 ```
 
-Compose does not create `workspace1`, `workspace2`, or their initial content. Run the setup script to create the workspaces and apply the baseline:
+Compose creates the PostgreSQL and pgAdmin services. Run the bootstrap
+to create both user tables, then register Jenkins users and request a
+workspace with `create_workspace.sh`:
 
 ```bash
 ./setup_workspaces.sh
+docker compose exec -T postgres psql -U bluegreen -d bluegreen \
+  -c "INSERT INTO bluegreen_users (user_id, user_name) VALUES (1001, 'your_jenkins_username') ON CONFLICT DO NOTHING;"
+./create_workspace.sh your_jenkins_username workspace_1
 ```
 
-It starts the Compose services, waits for PostgreSQL, creates either
-workspace that is missing, prompts for passwords only when a role does
-not already have one, then calls `create_initial_content.sh` and applies
-the DML files listed in `setup_workspaces.sh` for each workspace. Existing
-workspace objects are skipped; the DML files are safe to run again. The
-script stops if it finds a role
-or database without its matching counterpart so that it does not make a
-partial setup harder to recover. It does not stop or purge containers or
-volumes.
+The workspace creation command refuses usernames absent from the registry,
+users already in `ACTIVE_USERS`, and existing or partially created
+workspace role/database pairs.
+It does not stop or purge containers or volumes.
