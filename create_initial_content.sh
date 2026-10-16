@@ -20,57 +20,57 @@ elif [[ "$sentinels" == 11011 ]]; then
   printf 'Recreating missing partition table_3 in %s...\n' "$workspace"
   docker compose exec -T postgres psql -X -v ON_ERROR_STOP=1 --single-transaction \
     -U "$workspace" -d "$workspace" -v "workspace=$workspace" -f /dev/stdin \
-    < database/workspaces/initial_content/objects/create_table_3.sql
+    < database/deploy/ddl/table/table_3.sql
 elif [[ "$sentinels" == 00000 ]]; then
   # This manifest records DDL dependencies; table_5.column_2 stores data-copy order.
   files=(
-    create_type_1.sql
-    create_domain_1.sql
-    create_type_2.sql
-    create_type_3.sql
-    create_sequence_1.sql
-    create_sequence_2.sql
-    create_sequence_3.sql
-    create_table_1.sql
-    create_table_2.sql
-    create_table_4.sql
-    create_constraint_1.sql
-    create_constraint_2.sql
-    create_constraint_3.sql
-    create_constraint_4.sql
-    create_sequence_ownership_1.sql
-    create_sequence_ownership_2.sql
-    create_sequence_ownership_3.sql
-    create_table_3.sql
-    create_table_5.sql
-    create_constraint_5.sql
-    create_constraint_6.sql
-    create_constraint_7.sql
-    create_constraint_8.sql
-    create_function_1.sql
-    create_function_2.sql
-    create_function_3.sql
-    create_trigger_1.sql
-    create_procedure_1.sql
-    create_row_level_security_1.sql
-    create_policy_1.sql
-    create_index_1.sql
-    create_index_2.sql
-    create_view_1.sql
-    create_materialized_view_1.sql
-    create_view_2.sql
-    create_rule_1.sql
-    create_aggregate_1.sql
-    create_operator_1.sql
-    create_text_search_dictionary_1.sql
-    create_text_search_configuration_1.sql
-    create_text_search_mapping_1.sql
-    create_statistics_1.sql
-    create_publication_1.sql
+    type/type_1.sql
+    domain/domain_1.sql
+    type/type_2.sql
+    type/type_3.sql
+    sequence/sequence_1.sql
+    sequence/sequence_2.sql
+    sequence/sequence_3.sql
+    table/table_1.sql
+    table/table_2.sql
+    table/table_4.sql
+    constraint/constraint_1.sql
+    constraint/constraint_2.sql
+    constraint/constraint_3.sql
+    constraint/constraint_4.sql
+    sequence/sequence_ownership_1.sql
+    sequence/sequence_ownership_2.sql
+    sequence/sequence_ownership_3.sql
+    table/table_3.sql
+    table/table_5.sql
+    constraint/constraint_5.sql
+    constraint/constraint_6.sql
+    constraint/constraint_7.sql
+    constraint/constraint_8.sql
+    function/function_1.sql
+    function/function_2.sql
+    function/function_3.sql
+    trigger/trigger_1.sql
+    procedure/procedure_1.sql
+    security/row_level_security_1.sql
+    policy/policy_1.sql
+    index/index_1.sql
+    index/index_2.sql
+    view/view_1.sql
+    materialized_view/materialized_view_1.sql
+    view/view_2.sql
+    rule/rule_1.sql
+    aggregate/aggregate_1.sql
+    operator/operator_1.sql
+    text_search/text_search_dictionary_1.sql
+    text_search/text_search_configuration_1.sql
+    text_search/text_search_mapping_1.sql
+    statistics/statistics_1.sql
+    publication/publication_1.sql
   )
 
   for file in "${files[@]}"; do
-    [[ -f "database/workspaces/initial_content/objects/$file" ]] || {
+    [[ -f "database/deploy/ddl/$file" ]] || {
       printf 'Error: missing DDL file: %s\n' "$file" >&2
       exit 1
     }
@@ -80,28 +80,9 @@ elif [[ "$sentinels" == 00000 ]]; then
   for file in "${files[@]}"; do
     docker compose exec -T postgres psql -X -v ON_ERROR_STOP=1 --single-transaction \
       -U "$workspace" -d "$workspace" -v "workspace=$workspace" -f /dev/stdin \
-      < "database/workspaces/initial_content/objects/$file"
+      < "database/deploy/ddl/$file"
   done
 else
   printf 'Error: %s has a partial initial table setup (table_1 through table_5: %s). Review it manually.\n' "$workspace" "$sentinels" >&2
   exit 1
 fi
-
-# The seed order follows table_5.column_2; table_3 receives rows from table_2.
-seed_files=(
-  seed_table_5.sql
-  seed_table_1.sql
-  seed_table_2.sql
-  seed_table_4.sql
-  seed_materialized_view_1.sql
-)
-for file in "${seed_files[@]}"; do
-  [[ -f "database/workspaces/initial_content/seeds/$file" ]] || {
-    printf 'Error: missing seed file: %s\n' "$file" >&2
-    exit 1
-  }
-  printf 'Applying initial seed %s to %s...\n' "$file" "$workspace"
-  docker compose exec -T postgres psql -X -v ON_ERROR_STOP=1 --single-transaction \
-    -U "$workspace" -d "$workspace" -v "workspace=$workspace" -f /dev/stdin \
-    < "database/workspaces/initial_content/seeds/$file"
-done

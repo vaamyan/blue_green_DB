@@ -53,19 +53,34 @@ Kubernetes is out of scope for the initial milestone.
     ├── admin
     │   ├── create_workspace1.sql
     │   └── create_workspace2.sql
-    └── workspaces
-        └── initial_content
-            ├── objects
-            │   ├── create_type_1.sql
-            │   ├── create_table_1.sql
-            │   ├── create_table_5.sql
-            │   └── ... (one file per object)
-            └── seeds
-                ├── seed_table_1.sql
-                ├── seed_table_2.sql
-                ├── seed_table_4.sql
-                ├── seed_table_5.sql
-                └── seed_materialized_view_1.sql
+    ├── deploy
+    │   ├── ddl
+    │   │   ├── aggregate/
+    │   │   ├── constraint/
+    │   │   ├── domain/
+    │   │   ├── function/
+    │   │   ├── index/
+    │   │   ├── materialized_view/
+    │   │   ├── operator/
+    │   │   ├── policy/
+    │   │   ├── procedure/
+    │   │   ├── publication/
+    │   │   ├── rule/
+    │   │   ├── security/
+    │   │   ├── sequence/
+    │   │   ├── statistics/
+    │   │   ├── table/
+    │   │   ├── text_search/
+    │   │   ├── trigger/
+    │   │   ├── type/
+    │   │   └── view/
+    │   ├── dev/
+    │   └── dml/
+    │       ├── materialized_view_1.sql
+    │       ├── table_1.sql
+    │       ├── table_2.sql
+    │       ├── table_4.sql
+    │       └── table_5.sql
 ```
 
 ## Requirements
@@ -126,16 +141,14 @@ At the `psql` prompt, run the commands you need, then exit with `\q`:
 
 ## Workspace objects
 
-Each SQL file in `database/workspaces/initial_content/objects/` creates
-one PostgreSQL object and follows the `create_<object_type>_<number>.sql`
-naming pattern. Object names and filenames use stable numbers within each
+Each SQL file in `database/deploy/ddl/<object_type>/` creates
+one PostgreSQL object and follows the `<object_type>_<number>.sql`
+naming pattern. Sequence and sequence-ownership scripts are grouped together
+under `sequence/` for later consolidation. Object names and filenames use stable numbers within each
 object type. `create_initial_content.sh` applies the baseline DDL in
-dependency order, then loads its repeatable seeds. Use it from the repository root:
-
-```bash
-./create_initial_content.sh workspace1
-./create_initial_content.sh workspace2
-```
+dependency order. The full setup script, `setup_workspaces.sh`, applies the
+DDL to both workspaces and then runs the repeatable DML from
+`database/deploy/dml/`.
 
 The files use generic numbered identifiers for all user-created objects
 and columns. `table_1` holds the primary fixture rows; `table_2` is a
@@ -167,41 +180,33 @@ and `column_6` list related triggers and sequences; `column_7` enables
 or disables a row, and `column_8` stores a note.
 
 This table is configuration only; the export/import engine is a later
-milestone. Its seed registers `table_5` first, followed by `table_1`,
+milestone. Its DML registers `table_5` first, followed by `table_1`,
 `table_2`, and `table_4`. Rows for `table_2` are routed to `table_3` by
 partitioning.
 
 ## Workspace data
 
-The initial baseline is grouped under
-`database/workspaces/initial_content/`. Its DDL remains one object per
-file in `objects/`, and each table's fixture data stays in a separate
-file in `seeds/`. The seed files use names such as
-`seed_table_<number>.sql`; the materialized view refresh is in
-`seed_materialized_view_1.sql`. All seed files are repeatable. Run them in this order: `seed_table_5.sql`,
-`seed_table_1.sql`, `seed_table_2.sql`, `seed_table_4.sql`, then
-`seed_materialized_view_1.sql`. This makes export policy available first
-and refreshes derived data after its source rows are loaded.
+Initial fixture DML is organized under `database/deploy/dml/`, with one
+file per target object. `table_5.sql` loads export configuration first,
+followed by `table_1.sql`, `table_2.sql`, and `table_4.sql`;
+`materialized_view_1.sql` refreshes derived data last. The DML files are
+repeatable. Rows inserted into `table_2` are routed to its partition,
+`table_3`.
 
-Run all seeds in each workspace as its owner role:
+Run the complete initial DDL and DML setup for both workspaces:
 
 ```bash
-for seed in seed_table_5.sql seed_table_1.sql seed_table_2.sql seed_table_4.sql seed_materialized_view_1.sql; do
-  docker compose exec -T postgres psql -X -v ON_ERROR_STOP=1 --single-transaction \
-    -U workspace1 -d workspace1 -v workspace=workspace1 \
-    -f /dev/stdin < "database/workspaces/initial_content/seeds/$seed"
-done
-
-for seed in seed_table_5.sql seed_table_1.sql seed_table_2.sql seed_table_4.sql seed_materialized_view_1.sql; do
-  docker compose exec -T postgres psql -X -v ON_ERROR_STOP=1 --single-transaction \
-    -U workspace2 -d workspace2 -v workspace=workspace2 \
-    -f /dev/stdin < "database/workspaces/initial_content/seeds/$seed"
-done
+./setup_workspaces.sh
 ```
 
-To run only one seed, substitute its filename in the command. For
-example, use `seed_table_1.sql` to load `table_1` rows and align
-`sequence_1`, or `seed_table_2.sql` to load `table_2` rows.
+To run an individual DML file, use its name under `database/deploy/dml/`
+with the matching workspace role. For example:
+
+```bash
+docker compose exec -T postgres psql -X -v ON_ERROR_STOP=1 --single-transaction \
+  -U workspace1 -d workspace1 -v workspace=workspace1 \
+  -f /dev/stdin < database/deploy/dml/table_1.sql
+```
 
 ## Queries to check the environment
 
@@ -393,9 +398,10 @@ Compose does not create `workspace1`, `workspace2`, or their initial content. Ru
 
 It starts the Compose services, waits for PostgreSQL, creates either
 workspace that is missing, prompts for passwords only when a role does
-not already have one, then calls `create_initial_content.sh` for each
-workspace to apply the baseline DDL and per-table seeds. Existing
-workspace objects are skipped; the seed files are safe to run again. The script stops if it finds a role
+not already have one, then calls `create_initial_content.sh` and applies
+the DML files listed in `setup_workspaces.sh` for each workspace. Existing
+workspace objects are skipped; the DML files are safe to run again. The
+script stops if it finds a role
 or database without its matching counterpart so that it does not make a
 partial setup harder to recover. It does not stop or purge containers or
 volumes.

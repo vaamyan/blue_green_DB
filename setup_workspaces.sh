@@ -18,6 +18,30 @@ admin_psql() {
     -U bluegreen "$@"
 }
 
+initial_dml_files=(
+  table_5.sql
+  table_1.sql
+  table_2.sql
+  table_4.sql
+  materialized_view_1.sql
+)
+
+apply_initial_dml() {
+  local workspace="$1"
+  local file
+
+  for file in "${initial_dml_files[@]}"; do
+    [[ -f "database/deploy/dml/$file" ]] || die "Missing DML file: database/deploy/dml/$file"
+  done
+
+  for file in "${initial_dml_files[@]}"; do
+    printf 'Applying %s to %s...\n' "$file" "$workspace"
+    docker compose exec -T postgres psql -X -v ON_ERROR_STOP=1 --single-transaction \
+      -U "$workspace" -d "$workspace" -v "workspace=$workspace" -f /dev/stdin \
+      < "database/deploy/dml/$file"
+  done
+}
+
 printf 'Starting PostgreSQL and pgAdmin...\n'
 docker compose up -d
 
@@ -96,8 +120,11 @@ if [[ -s "$password_sql" ]]; then
   admin_psql -d postgres -f /dev/stdin < "$password_sql"
 fi
 
-./create_initial_content.sh workspace1
-./create_initial_content.sh workspace2
+for workspace in workspace1 workspace2; do
+  printf '\nApplying initial DDL to %s...\n' "$workspace"
+  ./create_initial_content.sh "$workspace"
+  apply_initial_dml "$workspace"
+done
 
 printf '\nWorkspace setup is complete. Current services:\n'
 docker compose ps
