@@ -1,0 +1,2 @@
+CREATE SCHEMA :"workspace" AUTHORIZATION :"workspace";
+REVOKE ALL ON SCHEMA public FROM PUBLIC;

@@ -30,8 +30,25 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+  jenkins:
+    build:
+      context: ./jenkins
+      dockerfile: Dockerfile
+    container_name: bluegreen-dev-jenkins
+    restart: unless-stopped
+    environment:
+      BLUEGREEN_DB_HOST: postgres
+      BLUEGREEN_DB_PORT: 5432
+    ports:
+      - "127.0.0.1:18080:8080"
+    volumes:
+      - jenkins_data:/var/jenkins_home
+    depends_on:
+      postgres:
+        condition: service_healthy
 
 volumes:
   pgadmin_data:
   postgres_dev_data:
+  jenkins_data:
 

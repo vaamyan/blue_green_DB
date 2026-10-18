@@ -36,9 +36,10 @@ Manual approval / promote the same validated revision
 PROD: deploy to inactive color -> validate -> switch traffic
 ```
 
-The first implementation uses PostgreSQL and Docker Compose. A Python
-API, Nginx router, and GitHub Actions workflows will be added later.
-Kubernetes is out of scope for the initial milestone.
+The local lab uses PostgreSQL, pgAdmin, and an optional Jenkins container
+managed by Docker Compose. A Python API, Nginx router, and production
+Blue-Green traffic switching remain future milestones. Kubernetes is out of
+scope for the initial milestone.
 
 ## Current repository structure
 
@@ -51,9 +52,34 @@ Kubernetes is out of scope for the initial milestone.
 ├── setup_workspaces.sh
 ├── create_workspace.sh
 ├── create_initial_content.sh
+├── jenkins
+│   └── Dockerfile
+├── scripts
+│   └── jenkins
+│       ├── activate_and_validate_workspace.sh
+│       ├── apply_workspace_ddl.sh
+│       ├── check_workspace_eligibility.sh
+│       ├── load_workspace_fixtures.sh
+│       ├── provision_workspace.sh
+│       ├── register_active_workspace.sh
+│       ├── validate_manifests.sh
+│       └── verify_side_effects_disabled.sh
 └── database
     ├── admin
     │   └── create_bluegreen_objects.sql
+    ├── jenkins
+    │   ├── check_active_user.sql
+    │   ├── check_workspace_objects.sql
+    │   ├── create_workspace_database.sql
+    │   ├── create_workspace_role.sql
+    │   ├── create_workspace_schema.sql
+    │   ├── disable_rule_1.sql
+    │   ├── disable_trigger_1.sql
+    │   ├── enable_runtime_objects.sql
+    │   ├── register_active_user.sql
+    │   ├── select_registered_user.sql
+    │   ├── validate_workspace.sql
+    │   └── verify_side_effects_disabled.sql
     ├── deploy
     │   ├── ddl
     │   │   ├── manifest.txt
@@ -263,8 +289,54 @@ Production, promote the same immutable artifact that passed UAT.
 
 ## Jenkins workspace deployment
 
-`Jenkinsfile` provisions one workspace for a registered user. Configure the
-Jenkins job with this repository as its Pipeline script source and provide:
+Jenkins is an optional container, separate from PostgreSQL. Its web interface
+is published only on this machine at <http://localhost:18080>. The container
+joins the Compose network and reaches PostgreSQL at `postgres:5432`; `localhost`
+inside Jenkins would mean the Jenkins container itself. PostgreSQL remains
+bound to host loopback on port `5432`.
+
+Start the database bootstrap first, then start Jenkins when you want to use
+the interface:
+
+```bash
+./setup_workspaces.sh
+docker compose up -d jenkins
+```
+
+On the first visit, Jenkins asks for its initial administrator password. Get
+it from the container with:
+
+```bash
+docker compose exec jenkins cat /var/jenkins_home/secrets/initialAdminPassword
+```
+
+Paste the password into the unlock page, install the suggested plugins, and
+create a Jenkins administrator account. This account is local to this Jenkins
+instance; there is no external Jenkins signup account. See the [official
+Jenkins Docker setup guide](https://www.jenkins.io/doc/book/installing/docker/)
+for details about the initial unlock process.
+
+Create a **Pipeline** job in the Jenkins UI. In its **Pipeline** section,
+choose **Pipeline script from SCM**, select **Git**, enter the repository URL
+and credentials if needed, and set the branch containing the `Jenkinsfile`.
+Use `Jenkinsfile` as the script path. The first run may stop at input
+validation because `WORKSPACE_USER` is blank; it does not create a database.
+After Jenkins has loaded the parameter definitions, select **Build with
+Parameters** and provide `BRANCH` and `WORKSPACE_USER`.
+
+Before running a workspace deployment, create a Jenkins **Username with
+password** credential with ID `bluegreen-postgres-admin`, username `bluegreen`,
+and the same administrator password configured as `POSTGRES_PASSWORD` in
+`.env`. The Compose service supplies `BLUEGREEN_DB_HOST=postgres` and
+`BLUEGREEN_DB_PORT=5432`. The custom Jenkins image installs `psql` and Git for
+the pipeline. In this local setup, `agent any` runs on Jenkins's built-in node
+inside the Jenkins container. No Docker socket is mounted into Jenkins; a
+separate build-agent container can be added later to simulate that topology.
+
+`Jenkinsfile` provisions one workspace for a registered user by calling the
+shell entry points in `scripts/jenkins/`. Those scripts run the SQL files in
+`database/jenkins/` and the DDL/DML manifests; the pipeline itself coordinates
+the stages and approval. The parameters are:
 
 - `BRANCH`: the Git branch to deploy.
 - `WORKSPACE_USER`: the exact username registered in `BLUEGREEN_USERS`.
@@ -275,18 +347,6 @@ workspace name as `workspace_<user_id>`. It rejects users already present in
 database. The Jenkins job must be access-controlled: a free-form
 `WORKSPACE_USER` parameter proves registry membership, but does not prove the
 builder's identity.
-
-Configure the Jenkins execution environment as follows:
-
-1. Install `psql` on the Jenkins agent. The agent must be able to connect to
-   the persistent `bluegreen` PostgreSQL service over the network.
-2. Set `BLUEGREEN_DB_HOST` and, if needed, `BLUEGREEN_DB_PORT` in the Jenkins
-   agent or global environment. The default port is `5432`.
-3. Create a Jenkins **Username with password** credential with ID
-   `bluegreen-postgres-admin`, username `bluegreen`, and the administrator
-   password for the control database.
-4. Ensure Jenkins can check out the selected branch using the repository
-   credentials configured on the Pipeline job.
 
 The stages validate both manifests and the registry entry, check workspace
 availability, create the role/database/schema, apply DDL in manifest order,
@@ -308,8 +368,8 @@ personal information in this lab.
 ## Isolated development environments
 
 The current configuration is intended for one local environment at a
-time: it uses fixed container names and publishes ports `5432` and
-`5050` on localhost. Running multiple copies at once would require
+time: it uses fixed container names and publishes ports `5432`, `5050`, and
+`18080` on localhost. Running multiple copies at once would require
 parameterizing those names and ports in `docker-compose.yml`.
 
 ---
@@ -323,7 +383,7 @@ Run these commands from the directory containing `docker-compose.yml`.
 Start PostgreSQL and pgAdmin in the background:
 
 ```bash
-docker compose up -d
+docker compose up -d postgres pgadmin
 ```
 
 Check the service status and wait for PostgreSQL to report `healthy`:
@@ -336,6 +396,16 @@ Open pgAdmin at <http://localhost:5050>. The configured username is
 `admin@example.com`; its password is the `PGADMIN_PASSWORD` value in
 `.env`. This account signs in to the pgAdmin web interface; it is
 separate from the PostgreSQL roles.
+
+When you want Jenkins, start only that service (PostgreSQL is also started if
+it is not already running):
+
+```bash
+docker compose up -d jenkins
+```
+
+Open <http://localhost:18080> to use Jenkins. Its saved jobs, plugins, and
+local accounts are kept in the `jenkins_data` volume.
 
 ### Configure the PostgreSQL connection in pgAdmin
 
@@ -420,7 +490,7 @@ volumes.
 
 This command removes the containers, network, and project volumes.
 **PostgreSQL databases, roles, and data are permanently deleted, along
-with pgAdmin's saved configuration.**
+with pgAdmin's and Jenkins's saved configuration, jobs, and local accounts.**
 
 ```bash
 docker compose down --volumes --remove-orphans
