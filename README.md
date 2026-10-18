@@ -303,6 +303,10 @@ the interface:
 docker compose up -d jenkins
 ```
 
+Run these commands from the repository directory. Once the container is
+running, open <http://localhost:18080> in your browser. Jenkins is available
+only on this machine; no account on jenkins.io is required.
+
 On the first visit, Jenkins asks for its initial administrator password. Get
 it from the container with:
 
@@ -315,6 +319,29 @@ create a Jenkins administrator account. This account is local to this Jenkins
 instance; there is no external Jenkins signup account. See the [official
 Jenkins Docker setup guide](https://www.jenkins.io/doc/book/installing/docker/)
 for details about the initial unlock process.
+
+To stop Jenkins while keeping its configuration, jobs, plugins, and accounts,
+run:
+
+```bash
+docker compose stop jenkins
+```
+
+Start it again later with:
+
+```bash
+docker compose start jenkins
+```
+
+To check whether Jenkins is running, use:
+
+```bash
+docker compose ps jenkins
+```
+
+The initial administrator password is needed only for the first unlock. Jenkins
+stores its setup in the `jenkins_data` volume, so stopping or restarting the
+container does not repeat the first-time setup.
 
 Create a **Pipeline** job in the Jenkins UI. In its **Pipeline** section,
 choose **Pipeline script from SCM**, select **Git**, enter the repository URL
