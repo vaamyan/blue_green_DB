@@ -47,14 +47,16 @@ Kubernetes is out of scope for the initial milestone.
 ├── .env.example
 ├── docker-compose.yml
 ├── README.md
+├── Jenkinsfile
 ├── setup_workspaces.sh
 ├── create_workspace.sh
 ├── create_initial_content.sh
 └── database
     ├── admin
-    │   └── create_bluegreen_users.sql
+    │   └── create_bluegreen_objects.sql
     ├── deploy
     │   ├── ddl
+    │   │   ├── manifest.txt
     │   │   ├── aggregate/
     │   │   ├── constraint/
     │   │   ├── domain/
@@ -75,7 +77,8 @@ Kubernetes is out of scope for the initial milestone.
     │   │   ├── type/
     │   │   └── view/
     │   ├── dev/
-    │   └── dml/
+    │   └── dml
+    │       ├── manifest.txt
     │       ├── materialized_view_1.sql
     │       ├── table_1.sql
     │       ├── table_2.sql
@@ -100,8 +103,8 @@ cp .env.example .env
 `.env` contains the PostgreSQL administrator and pgAdmin passwords. Do
 not commit it to the repository.
 
-Run the bootstrap to create the user registries before adding
-authorized Jenkins usernames:
+Run the bootstrap to start the Blue-Green PostgreSQL service and create its
+control tables:
 
 ```bash
 ./setup_workspaces.sh
@@ -110,8 +113,10 @@ authorized Jenkins usernames:
 ## Roles and workspaces
 
 Compose starts PostgreSQL with the `bluegreen` database and the
-`bluegreen` superuser role. The bootstrap creates `BLUEGREEN_USERS` and
-`ACTIVE_USERS` in the `bluegreen` database. Both tables have manually
+`bluegreen` superuser role. The bootstrap starts only the PostgreSQL service and creates the
+`BLUEGREEN_USERS` and `ACTIVE_USERS` control tables in the `bluegreen`
+database. It does not create a developer workspace or insert registry/data
+rows. Both tables have manually
 assigned `user_id` and `user_name` values.
 `user_id` is unique but is not a primary key, and `user_name` is unique so
 the Jenkins lookup is unambiguous. Add both values when registering a user:
@@ -147,9 +152,9 @@ Each SQL file in `database/deploy/ddl/<object_type>/` creates
 one PostgreSQL object and follows the `<object_type>_<number>.sql`
 naming pattern. Sequence and sequence-ownership scripts are grouped together
 under `sequence/` for later consolidation. Object names and filenames use
-stable numbers within each object type. `create_initial_content.sh` applies
-the baseline DDL in dependency order. `create_workspace.sh` then runs the
-repeatable DML from `database/deploy/dml/` for the requested workspace.
+stable numbers within each object type. `database/deploy/ddl/manifest.txt`
+defines DDL dependency order; `database/deploy/dml/manifest.txt` defines
+fixture load order. The local shell helper uses the DDL manifest.
 
 The files use generic numbered identifiers for all user-created objects
 and columns. `table_1` holds the primary fixture rows; `table_2` is a
@@ -194,7 +199,8 @@ followed by `table_1.sql`, `table_2.sql`, and `table_4.sql`;
 repeatable. Rows inserted into `table_2` are routed to its partition,
 `table_3`.
 
-Create a registered user's workspace and apply all initial DDL and DML:
+The local helper can create a registered user's workspace and apply its DDL
+and DML:
 
 ```bash
 ./create_workspace.sh your_jenkins_username workspace_1
@@ -255,7 +261,46 @@ Production, promote the same immutable artifact that passed UAT.
 - [ ] Add approval-gated Production promotion.
 - [ ] Document migrations and data preservation between versions.
 
-## Synthetic data
+## Jenkins workspace deployment
+
+`Jenkinsfile` provisions one workspace for a registered user. Configure the
+Jenkins job with this repository as its Pipeline script source and provide:
+
+- `BRANCH`: the Git branch to deploy.
+- `WORKSPACE_USER`: the exact username registered in `BLUEGREEN_USERS`.
+
+The pipeline looks up the user's manually assigned `user_id` and derives the
+workspace name as `workspace_<user_id>`. It rejects users already present in
+`ACTIVE_USERS` and refuses to reuse an existing or partially created role or
+database. The Jenkins job must be access-controlled: a free-form
+`WORKSPACE_USER` parameter proves registry membership, but does not prove the
+builder's identity.
+
+Configure the Jenkins execution environment as follows:
+
+1. Install `psql` on the Jenkins agent. The agent must be able to connect to
+   the persistent `bluegreen` PostgreSQL service over the network.
+2. Set `BLUEGREEN_DB_HOST` and, if needed, `BLUEGREEN_DB_PORT` in the Jenkins
+   agent or global environment. The default port is `5432`.
+3. Create a Jenkins **Username with password** credential with ID
+   `bluegreen-postgres-admin`, username `bluegreen`, and the administrator
+   password for the control database.
+4. Ensure Jenkins can check out the selected branch using the repository
+   credentials configured on the Pipeline job.
+
+The stages validate both manifests and the registry entry, check workspace
+availability, create the role/database/schema, apply DDL in manifest order,
+verify the trigger and rule are disabled, pause for manual review before
+loading fixture data in one transaction, enable the trigger and rule, validate
+fixture counts and the materialized view, then register the user in
+`ACTIVE_USERS`. A failure
+before registration leaves any partially provisioned objects for inspection;
+the pipeline does not silently delete them. PostgreSQL has no disabled state
+for sequences: their values change only when `nextval` or `setval` is called.
+The fixture DML intentionally advances its owned sequences; PostgreSQL
+sequence increments are not rolled back with the data transaction. The sample
+trigger and rule are disabled while fixture DML runs and enabled before
+validation and registration.
 
 Use synthetic data only. Do not store real employer, customer, or
 personal information in this lab.
