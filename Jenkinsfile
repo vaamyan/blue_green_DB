@@ -10,7 +10,7 @@ pipeline {
 
     parameters {
         string(name: 'BRANCH', defaultValue: 'main', description: 'Git branch to deploy.')
-        string(name: 'WORKSPACE_USER', defaultValue: '', description: 'Registered username from BLUEGREEN_USERS.')
+        string(name: 'WORKSPACE_NAME', defaultValue: '', description: 'Exact registered user_name from BLUEGREEN_USERS; also used as the role, database, and schema name.')
     }
 
     environment {
@@ -25,8 +25,8 @@ pipeline {
                     if (!params.BRANCH?.trim() || !(params.BRANCH ==~ '[A-Za-z0-9._/-]+') || params.BRANCH.contains('..')) {
                         error('BRANCH is required and must be a simple Git branch name.')
                     }
-                    if (!params.WORKSPACE_USER?.trim() || !(params.WORKSPACE_USER ==~ /^[A-Za-z0-9._-]+$/)) {
-                        error('WORKSPACE_USER is required and may contain only letters, digits, dots, underscores, and hyphens.')
+                    if (!params.WORKSPACE_NAME?.trim() || !(params.WORKSPACE_NAME ==~ /^[A-Za-z0-9._-]{1,63}$/)) {
+                        error('WORKSPACE_NAME is required, must be at most 63 characters, and may contain only letters, digits, dots, underscores, and hyphens.')
                     }
                     if (!env.BLUEGREEN_DB_HOST?.trim()) {
                         error('BLUEGREEN_DB_HOST is not configured for the Jenkins container.')
@@ -60,14 +60,14 @@ pipeline {
             steps {
                 script {
                     env.WORKSPACE_ID = sh(
-                        script: './scripts/jenkins/check_workspace_eligibility.sh "' + params.WORKSPACE_USER + '"',
+                        script: './scripts/jenkins/check_workspace_eligibility.sh "' + params.WORKSPACE_NAME + '"',
                         returnStdout: true
                     ).trim()
                     if (!(env.WORKSPACE_ID ==~ /^[0-9]+$/)) {
                         error('The eligibility script did not return a valid user_id.')
                     }
-                    env.WORKSPACE_NAME = "workspace_${env.WORKSPACE_ID}"
-                    echo "Registry check passed. Workspace name: ${env.WORKSPACE_NAME}."
+                    env.WORKSPACE_NAME = params.WORKSPACE_NAME
+                    echo "Registry check passed. Exact workspace name: ${env.WORKSPACE_NAME}."
                 }
             }
         }
@@ -84,7 +84,7 @@ pipeline {
             }
         }
 
-        stage('Verify triggers and rules are inactive') {
+        stage('Verify trigger is inactive') {
             steps {
                 sh './scripts/jenkins/verify_side_effects_disabled.sh "$WORKSPACE_NAME"'
             }
@@ -111,7 +111,7 @@ pipeline {
 
         stage('Register workspace in ACTIVE_USERS') {
             steps {
-                sh './scripts/jenkins/register_active_workspace.sh "$WORKSPACE_USER" "$WORKSPACE_ID"'
+                sh './scripts/jenkins/register_active_workspace.sh "$WORKSPACE_NAME" "$WORKSPACE_ID"'
             }
         }
     }

@@ -5,7 +5,7 @@ ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
 
 user_name="${1:-}"
-[[ "$user_name" =~ ^[A-Za-z0-9._-]+$ ]] || {
+[[ "$user_name" =~ ^[A-Za-z0-9._-]{1,63}$ ]] || {
   printf 'Usage: %s <registered_user_name>\n' "$0" >&2
   exit 2
 }
@@ -26,12 +26,11 @@ active="$(psql -X -w -v ON_ERROR_STOP=1 -Atq \
   exit 1
 }
 
-workspace="workspace_${user_id}"
 object_status="$(psql -X -w -v ON_ERROR_STOP=1 -Atq -d postgres \
-  -v "workspace=$workspace" \
+  -v "workspace=$user_name" \
   -f database/jenkins/check_workspace_objects.sql)"
 [[ "$object_status" == '0|0' ]] || {
-  printf 'Workspace role/database already exists or is partially provisioned: %s\n' "$workspace" >&2
+  printf 'Workspace role/database already exists or is partially provisioned: %s\n' "$user_name" >&2
   exit 1
 }
 

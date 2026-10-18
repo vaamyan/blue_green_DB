@@ -6,8 +6,8 @@ cd "$ROOT_DIR"
 
 user_name="${1:-}"
 user_id="${2:-}"
-[[ "$user_name" =~ ^[A-Za-z0-9._-]+$ && "$user_id" =~ ^[0-9]+$ ]] || {
-  printf 'Usage: %s <registered_user_name> <user_id>\n' "$0" >&2
+[[ "$user_name" =~ ^[A-Za-z0-9._-]{1,63}$ && "$user_id" =~ ^[0-9]+$ ]] || {
+  printf 'Usage: %s <workspace_name> <user_id>\n' "$0" >&2
   exit 2
 }
 

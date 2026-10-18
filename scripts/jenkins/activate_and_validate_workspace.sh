@@ -5,13 +5,14 @@ ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
 
 workspace="${1:-}"
-[[ "$workspace" =~ ^workspace_[0-9]+$ ]] || {
-  printf 'Usage: %s workspace_<number>\n' "$0" >&2
+[[ "$workspace" =~ ^[A-Za-z0-9._-]{1,63}$ ]] || {
+  printf 'Usage: %s <workspace_name> (1-63 letters, digits, dots, underscores, or hyphens)\n' "$0" >&2
   exit 2
 }
 
 psql -X -w -v ON_ERROR_STOP=1 -d "$workspace" \
   -v "workspace=$workspace" \
-  -c "SET ROLE $workspace" \
+  -c "SET ROLE \"$workspace\"" \
+  -f database/deploy/ddl/rule/rule_1.sql \
   -f database/jenkins/enable_runtime_objects.sql \
   -f database/jenkins/validate_workspace.sql

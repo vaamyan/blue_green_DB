@@ -73,7 +73,6 @@ scope for the initial milestone.
     │   ├── create_workspace_database.sql
     │   ├── create_workspace_role.sql
     │   ├── create_workspace_schema.sql
-    │   ├── disable_rule_1.sql
     │   ├── disable_trigger_1.sql
     │   ├── enable_runtime_objects.sql
     │   ├── register_active_user.sql
@@ -347,9 +346,9 @@ Create a **Pipeline** job in the Jenkins UI. In its **Pipeline** section,
 choose **Pipeline script from SCM**, select **Git**, enter the repository URL
 and credentials if needed, and set the branch containing the `Jenkinsfile`.
 Use `Jenkinsfile` as the script path. The first run may stop at input
-validation because `WORKSPACE_USER` is blank; it does not create a database.
+validation because `WORKSPACE_NAME` is blank; it does not create a database.
 After Jenkins has loaded the parameter definitions, select **Build with
-Parameters** and provide `BRANCH` and `WORKSPACE_USER`.
+Parameters** and provide `BRANCH` and `WORKSPACE_NAME`.
 
 Before running a workspace deployment, create a Jenkins **Username with
 password** credential with ID `bluegreen-postgres-admin`, username `bluegreen`,
@@ -366,19 +365,20 @@ shell entry points in `scripts/jenkins/`. Those scripts run the SQL files in
 the stages and approval. The parameters are:
 
 - `BRANCH`: the Git branch to deploy.
-- `WORKSPACE_USER`: the exact username registered in `BLUEGREEN_USERS`.
+- `WORKSPACE_NAME`: the exact `user_name` registered in `BLUEGREEN_USERS`.
 
-The pipeline looks up the user's manually assigned `user_id` and derives the
-workspace name as `workspace_<user_id>`. It rejects users already present in
-`ACTIVE_USERS` and refuses to reuse an existing or partially created role or
-database. The Jenkins job must be access-controlled: a free-form
-`WORKSPACE_USER` parameter proves registry membership, but does not prove the
-builder's identity.
+The pipeline looks up the matching `user_id`, but uses `WORKSPACE_NAME`
+unchanged as the PostgreSQL role, database, and schema name. It never builds a
+workspace name from the ID. It rejects users already present in `ACTIVE_USERS`
+and refuses to reuse an existing or partially created role or database. The
+name must be 1-63 ASCII letters, digits, dots, underscores, or hyphens. The
+Jenkins job must be access-controlled: a free-form `WORKSPACE_NAME` parameter
+proves registry membership, but does not prove the builder's identity.
 
 The stages validate both manifests and the registry entry, check workspace
 availability, create the role/database/schema, apply DDL in manifest order,
-verify the trigger and rule are disabled, pause for manual review before
-loading fixture data in one transaction, enable the trigger and rule, validate
+verify the trigger is disabled, pause for manual review before loading fixture
+data in one transaction, create the view rule and enable the trigger, validate
 fixture counts and the materialized view, then register the user in
 `ACTIVE_USERS`. A failure
 before registration leaves any partially provisioned objects for inspection;
@@ -386,8 +386,9 @@ the pipeline does not silently delete them. PostgreSQL has no disabled state
 for sequences: their values change only when `nextval` or `setval` is called.
 The fixture DML intentionally advances its owned sequences; PostgreSQL
 sequence increments are not rolled back with the data transaction. The sample
-trigger and rule are disabled while fixture DML runs and enabled before
-validation and registration.
+trigger remains disabled while fixture DML runs. PostgreSQL does not support
+disabling rules on views, so the view rule is created after fixture loading;
+it is active for validation and subsequent use.
 
 Use synthetic data only. Do not store real employer, customer, or
 personal information in this lab.
