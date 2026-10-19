@@ -25,9 +25,6 @@ pipeline {
                     if (!params.BRANCH?.trim() || !(params.BRANCH ==~ '[A-Za-z0-9._/-]+') || params.BRANCH.contains('..')) {
                         error('BRANCH is required and must be a simple Git branch name.')
                     }
-                    if (!params.WORKSPACE_NAME?.trim() || !(params.WORKSPACE_NAME ==~ /^[A-Za-z0-9._-]{1,63}$/)) {
-                        error('WORKSPACE_NAME is required, must be at most 63 characters, and may contain only letters, digits, dots, underscores, and hyphens.')
-                    }
                     if (!env.BLUEGREEN_DB_HOST?.trim()) {
                         error('BLUEGREEN_DB_HOST is not configured for the Jenkins container.')
                     }
@@ -50,31 +47,18 @@ pipeline {
             }
         }
 
-        stage('Validate deployment manifests') {
-            steps {
-                sh './scripts/jenkins/validate_manifests.sh'
-            }
-        }
-
-        stage('Check workspace eligibility') {
+        stage('Check workspace status') {
             steps {
                 script {
-                    env.WORKSPACE_ID = sh(
-                        script: './scripts/jenkins/check_workspace_eligibility.sh "' + params.WORKSPACE_NAME + '"',
-                        returnStdout: true
-                    ).trim()
-                    if (!(env.WORKSPACE_ID ==~ /^[0-9]+$/)) {
-                        error('The eligibility script did not return a valid user_id.')
-                    }
                     env.WORKSPACE_NAME = params.WORKSPACE_NAME
-                    echo "Registry check passed. Exact workspace name: ${env.WORKSPACE_NAME}."
                 }
+                sh 'psql -X -w -v ON_ERROR_STOP=1 -v "requested_user=$WORKSPACE_NAME" -d "$PGDATABASE" -f database/jenkins/check_workspace_status.sql'
             }
         }
 
         stage('Create role, database, and schema') {
             steps {
-                sh './scripts/jenkins/provision_workspace.sh "$WORKSPACE_NAME"'
+                sh 'psql -X -w -v ON_ERROR_STOP=1 -v "workspace=$WORKSPACE_NAME" -d postgres -f database/jenkins/create_workspace.sql'
             }
         }
 
@@ -111,7 +95,7 @@ pipeline {
 
         stage('Register workspace in ACTIVE_USERS') {
             steps {
-                sh './scripts/jenkins/register_active_workspace.sh "$WORKSPACE_NAME" "$WORKSPACE_ID"'
+                sh 'psql -X -w -v ON_ERROR_STOP=1 -v "requested_user=$WORKSPACE_NAME" -d "$PGDATABASE" -f database/jenkins/register_active_user.sql'
             }
         }
     }
