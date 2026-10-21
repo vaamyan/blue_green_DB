@@ -16,6 +16,7 @@ pipeline {
     environment {
         BLUEGREEN_ADMIN_CREDENTIALS = credentials('bluegreen-postgres-admin')
         PGDATABASE = 'bluegreen'
+        PSQL = 'psql -X -w -v ON_ERROR_STOP=1'
     }
 
     stages {
@@ -52,19 +53,19 @@ pipeline {
                 script {
                     env.WORKSPACE_NAME = params.WORKSPACE_NAME
                 }
-                sh 'psql -X -w -v ON_ERROR_STOP=1 -v "requested_user=$WORKSPACE_NAME" -d "$PGDATABASE" -f database/jenkins/check_workspace_status.sql'
+                sh '$PSQL -v "requested_user=$WORKSPACE_NAME" -d "$PGDATABASE" -f database/jenkins/check_workspace_status.sql'
             }
         }
 
         stage('Create role, database, and schema') {
             steps {
-                sh 'psql -X -w -v ON_ERROR_STOP=1 -v "workspace=$WORKSPACE_NAME" -d postgres -f database/jenkins/create_workspace.sql'
+                sh '$PSQL -v "workspace=$WORKSPACE_NAME" -d postgres -f database/jenkins/create_workspace.sql'
             }
         }
 
         stage('Apply DDL in dependency order') {
             steps {
-                sh 'psql -X -w -v ON_ERROR_STOP=1 -v "workspace=$WORKSPACE_NAME" -d "$WORKSPACE_NAME" -f database/deploy/ddl/install_all_objects.sql'
+                sh '$PSQL -v "workspace=$WORKSPACE_NAME" -d "$WORKSPACE_NAME" -f database/deploy/ddl/install_all_objects.sql'
             }
         }
 
@@ -77,13 +78,13 @@ pipeline {
 
         stage('Load fixture data') {
             steps {
-                sh 'psql -X -w --single-transaction -v ON_ERROR_STOP=1 -v "workspace=$WORKSPACE_NAME" -d "$WORKSPACE_NAME" -f database/deploy/dml/install_all_fixtures.sql'
+                sh '$PSQL --single-transaction -v "workspace=$WORKSPACE_NAME" -d "$WORKSPACE_NAME" -f database/deploy/dml/install_all_fixtures.sql'
             }
         }
 
         stage('Register workspace in ACTIVE_USERS') {
             steps {
-                sh 'psql -X -w -v ON_ERROR_STOP=1 -v "requested_user=$WORKSPACE_NAME" -d "$PGDATABASE" -f database/jenkins/register_active_user.sql'
+                sh '$PSQL -v "requested_user=$WORKSPACE_NAME" -d "$PGDATABASE" -f database/jenkins/register_active_user.sql'
             }
         }
     }
