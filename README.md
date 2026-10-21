@@ -49,17 +49,12 @@ scope for the initial milestone.
 ├── docker-compose.yml
 ├── README.md
 ├── Jenkinsfile
+├── deployment.xml
 ├── setup_workspaces.sh
 ├── create_workspace.sh
 ├── create_initial_content.sh
 ├── jenkins/
 │   └── Dockerfile
-├── scripts/jenkins/
-│   ├── apply_workspace_ddl.sh
-│   ├── check_workspace_eligibility.sh
-│   ├── provision_workspace.sh
-│   ├── register_active_workspace.sh
-│   └── validate_manifests.sh
 └── database/
     ├── admin/
     │   └── create_bluegreen_objects.sql
@@ -74,13 +69,10 @@ scope for the initial milestone.
     └── deploy/
         ├── ddl/
         │   ├── install_all_objects.sql
-        │   ├── manifest.txt
         │   └── <object_type>/*.sql
         └── dml/
             ├── install_all_fixtures.sql
-            ├── manifest.txt
-            ├── materialized_view_1.sql
-            └── table_1.sql ... table_4.sql
+            └── *.sql
 ```
 
 ## Requirements
@@ -88,7 +80,7 @@ scope for the initial milestone.
 - Docker Desktop or Docker Engine with the Docker Compose plugin.
 - Git.
 
-## Initial setup
+## First-time setup
 
 From the repository directory, create the local configuration file and
 replace the example values with strong passwords:
@@ -100,48 +92,33 @@ cp .env.example .env
 `.env` contains the PostgreSQL administrator and pgAdmin passwords. Do
 not commit it to the repository.
 
-Run the bootstrap to start the Blue-Green PostgreSQL service and create its
-control tables:
+Run the bootstrap to start PostgreSQL and create the Blue-Green control
+tables. It does not create developer workspaces or load workspace fixtures:
 
 ```bash
 ./setup_workspaces.sh
 ```
 
-## Roles and workspaces
+## Register a developer
 
-Compose starts PostgreSQL with the `bluegreen` database and the
-`bluegreen` superuser role. The bootstrap starts only the PostgreSQL service and creates the
-`BLUEGREEN_USERS` and `ACTIVE_USERS` control tables in the `bluegreen`
-database. It does not create a developer workspace or insert registry/data
-rows. Both tables have manually
-assigned `user_id` and `user_name` values.
-`user_id` is unique but is not a primary key, and `user_name` is unique so
-the Jenkins lookup is unambiguous. Add both values when registering a user:
+Compose initializes the `bluegreen` database and administrator role. The
+bootstrap creates `BLUEGREEN_USERS` and `ACTIVE_USERS` in that database. Both
+tables have manually assigned `user_id` and `user_name` values. `user_id` is
+unique but is not a primary key; `user_name` is unique. Register each developer
+once, using the exact `user_name` that Jenkins will receive as
+`WORKSPACE_NAME`:
 
 ```bash
 docker compose exec -T postgres psql -U bluegreen -d bluegreen \
   -c "INSERT INTO bluegreen_users (user_id, user_name) VALUES (1001, 'your_jenkins_username') ON CONFLICT DO NOTHING;"
 ```
 
-A Jenkins job can request a workspace by passing the registered username
-and a workspace name to the creation script:
-
-```bash
-./create_workspace.sh your_jenkins_username workspace_1
-```
-
-The script checks the username in `BLUEGREEN_USERS`, creates a matching
-login role, database, and schema, then applies the DDL and DML from
-`database/deploy/`. Workspace roles cannot create databases or administer
-other roles. Once deployment succeeds, the script copies that user's ID
-and name into `ACTIVE_USERS`; a user already in that table cannot create a
-second workspace. The generated role has no password set yet; Jenkins runs
-the deployment using `bluegreen` and switches to the workspace role.
-Password provisioning for application connections will be a separate step.
-
-For this first version, the username is supplied as a script argument.
-Jenkins must eventually populate it from the authenticated build identity;
-a free-form build parameter alone does not prove who started the job.
+Each developer may have one active workspace. Jenkins uses the exact
+`user_name` as the PostgreSQL role, database, and schema name; it does not
+generate a name from `user_id`. The SQL status check rejects an unregistered
+user, a user already active, or a workspace role/database that already exists.
+Create workspaces through the Jenkins job described below. The older helper
+script is not part of this Jenkins flow.
 
 ## Workspace objects
 
@@ -149,10 +126,8 @@ Each SQL file in `database/deploy/ddl/<object_type>/` creates
 one PostgreSQL object and follows the `<object_type>_<number>.sql`
 naming pattern. Sequence and sequence-ownership scripts are grouped together
 under `sequence/`. Object names and filenames use
-stable numbers within each object type. `database/deploy/ddl/manifest.txt`
-records DDL dependency order. `install_all_objects.sql` calls the DDL files
-in that order with psql `\ir` commands. `database/deploy/dml/manifest.txt`
-defines fixture load order.
+stable numbers within each object type. `install_all_objects.sql` lists the
+DDL files explicitly in dependency order with psql `\ir` commands.
 
 The files use generic numbered identifiers for all user-created objects
 and columns. `table_1` through `table_4` are independent tables. Each table
@@ -175,21 +150,15 @@ and their trust settings.
 ## Workspace data
 
 Initial fixture DML is organized under `database/deploy/dml/`, with one
-file per target table. `install_all_fixtures.sql` includes the files in the
-order listed by `manifest.txt`; `materialized_view_1.sql` refreshes derived
-data last. Jenkins executes the installer in a single transaction. The DML
+file per target table. `install_all_fixtures.sql` lists the files explicitly;
+`materialized_view_1.sql` refreshes derived data last. Jenkins executes the
+installer in a single transaction. The DML
 files are repeatable, and each table's trigger assigns its own ID from its
 sequence.
 
-The local helper can create a registered user's workspace and apply its DDL
-and DML:
-
-```bash
-./create_workspace.sh your_jenkins_username workspace_1
-```
-
-To run an individual DML file, use `bluegreen` and switch to the target
-workspace role. For example:
+Jenkins loads fixture data by running `install_all_fixtures.sql` after manual
+approval in the pipeline. For local inspection, an individual DML file can
+be run as follows:
 
 ```bash
 docker compose exec -T postgres psql -X -v ON_ERROR_STOP=1 --single-transaction \
@@ -251,12 +220,13 @@ joins the Compose network and reaches PostgreSQL at `postgres:5432`; `localhost`
 inside Jenkins would mean the Jenkins container itself. PostgreSQL remains
 bound to host loopback on port `5432`.
 
-Start the database bootstrap first, then start Jenkins when you want to use
-the interface:
+For a clean first-time startup, run the database bootstrap, then start pgAdmin
+and Jenkins:
 
 ```bash
 ./setup_workspaces.sh
-docker compose up -d jenkins
+docker compose up -d pgadmin jenkins
+docker compose ps
 ```
 
 Run these commands from the repository directory. Once the container is
@@ -299,13 +269,18 @@ The initial administrator password is needed only for the first unlock. Jenkins
 stores its setup in the `jenkins_data` volume, so stopping or restarting the
 container does not repeat the first-time setup.
 
-Create a **Pipeline** job in the Jenkins UI. In its **Pipeline** section,
-choose **Pipeline script from SCM**, select **Git**, enter the repository URL
-and credentials if needed, and set the branch containing the `Jenkinsfile`.
-Use `Jenkinsfile` as the script path. The first run may stop at input
-validation because `WORKSPACE_NAME` is blank; it does not create a database.
-After Jenkins has loaded the parameter definitions, select **Build with
-Parameters** and provide `BRANCH` and `WORKSPACE_NAME`.
+Create a **Pipeline** job in the Jenkins UI. Under **Pipeline**, choose
+**Pipeline script from SCM**, select **Git**, enter the repository URL and
+the Git read credential if required, and set the script path to `Jenkinsfile`.
+The branch configured here supplies the Jenkinsfile that starts the run. The
+pipeline then checks out the branch supplied in the `BRANCH` parameter for its
+SQL and deployment files. Keep those branch values aligned when the Jenkinsfile
+itself must also come from that branch.
+
+The Jenkinsfile defines `BRANCH` (default `main`) and `WORKSPACE_NAME` (default
+blank). After the job loads these parameters, choose **Build with Parameters**.
+Set `BRANCH` to the Git branch to deploy and set `WORKSPACE_NAME` to the exact
+registered value in `BLUEGREEN_USERS`.
 
 Before running a workspace deployment, create a Jenkins **Username with
 password** credential with ID `bluegreen-postgres-admin`, username `bluegreen`,
@@ -316,10 +291,23 @@ the pipeline. In this local setup, `agent any` runs on Jenkins's built-in node
 inside the Jenkins container. No Docker socket is mounted into Jenkins; a
 separate build-agent container can be added later to simulate that topology.
 
-`Jenkinsfile` provisions one workspace for a registered user by calling the
-shell entry points in `scripts/jenkins/`. Those scripts run the SQL files in
-`database/jenkins/` and the DDL/DML manifests; the pipeline itself coordinates
-the stages and approval. The parameters are:
+`Jenkinsfile` reads SQL paths from `deployment.xml` and invokes those files
+with `psql`. The SQL installer files include DDL and fixture files in their
+required order. The pipeline checks workspace status, creates its role,
+database and schema, applies DDL, pauses for fixture approval, loads fixture
+data, then registers the developer in `ACTIVE_USERS`.
+
+Before running the job, add the developer in `BLUEGREEN_USERS` using pgAdmin's
+Query Tool connected to the `bluegreen` database, with your own unused ID and
+the exact name you intend to pass as `WORKSPACE_NAME`:
+
+```sql
+INSERT INTO bluegreen_users (user_id, user_name)
+VALUES (1001, 'WORKSPACE01');
+```
+
+The values above are examples; replace them if either is already in use. The
+parameters are:
 
 - `BRANCH`: the Git branch to deploy.
 - `WORKSPACE_NAME`: the exact `user_name` registered in `BLUEGREEN_USERS`.
@@ -332,11 +320,11 @@ name must be 1-63 ASCII letters, digits, dots, underscores, or hyphens. The
 Jenkins job must be access-controlled: a free-form `WORKSPACE_NAME` parameter
 proves registry membership, but does not prove the builder's identity.
 
-The stages check workspace eligibility, create the role/database/schema,
-apply DDL through `install_all_objects.sql`, pause for manual fixture review,
-load DML through `install_all_fixtures.sql` in one transaction, then register
-the user in `ACTIVE_USERS`. A failure
-before registration leaves partially provisioned objects for inspection; the
+If Jenkins reports a pending Script Approval for loading `deployment.xml`, a
+Jenkins administrator can review it under **Manage Jenkins > Script Approval**.
+
+A failure before registration leaves partially provisioned objects for
+inspection; the
 pipeline does not silently delete them. The ID triggers stay enabled during
 fixture loading and call their table's sequence when an insert omits the ID.
 PostgreSQL sequence increments are not rolled back with a failed transaction.
@@ -359,7 +347,8 @@ Run these commands from the directory containing `docker-compose.yml`.
 
 ### 1. Start the environment
 
-Start PostgreSQL and pgAdmin in the background:
+After the first-time bootstrap has created the Blue-Green control tables, start
+PostgreSQL and pgAdmin in the background:
 
 ```bash
 docker compose up -d postgres pgadmin
@@ -405,12 +394,11 @@ Enable **Save password** if you want pgAdmin to remember it, then select
 PostgreSQL service over the Docker Compose network. `localhost` would
 refer to the pgAdmin container itself.
 
-After creating a workspace and setting a password for its role, you can
-register another pgAdmin server for it. Use the generated workspace name
-(for example, `workspace_1`) as both the maintenance database and username.
-Keep the host as `postgres` and port as `5432`. Workspace roles are
-limited to their own database; use the `BlueGreen Admin` connection for
-cluster administration and database creation.
+After Jenkins creates a workspace and you set a password for its role, you can
+register another pgAdmin server for it. Use the exact `WORKSPACE_NAME` as both
+the maintenance database and username. Keep the host as `postgres` and port as
+`5432`. Workspace roles are limited to their own database; use the
+`BlueGreen Admin` connection for cluster administration and database creation.
 
 ### 2. View logs
 
@@ -465,34 +453,49 @@ docker compose down
 Then `docker compose up -d` recreates the containers using the existing
 volumes.
 
-### 5. Remove everything and start fresh
+### 5. Delete the full environment and start from zero
 
-This command removes the containers, network, and project volumes.
-**PostgreSQL databases, roles, and data are permanently deleted, along
-with pgAdmin's and Jenkins's saved configuration, jobs, and local accounts.**
+First, make sure `.env` exists and contains the `POSTGRES_PASSWORD` and
+`PGADMIN_PASSWORD` values you want to keep using. If `.env` is missing, copy
+`.env.example` and edit it before continuing. Do not copy the example over an
+existing `.env`:
+
+```bash
+cp .env.example .env
+# Edit .env and set POSTGRES_PASSWORD and PGADMIN_PASSWORD
+```
+
+With `.env` ready, run this from the repository root. It removes the
+containers, network, and project volumes. **PostgreSQL databases, roles, and
+data are permanently deleted, along with pgAdmin's saved state and Jenkins's
+jobs, plugins, credentials, and local accounts.**
 
 ```bash
 docker compose down --volumes --remove-orphans
 ```
 
-Create a fresh environment again with:
-
-```bash
-docker compose up -d
-```
-
-Compose creates the PostgreSQL and pgAdmin services. Run the bootstrap
-to create both user tables, then register Jenkins users and request a
-workspace with `create_workspace.sh`:
+Recreate PostgreSQL and its Blue-Green control tables, then start pgAdmin and
+Jenkins:
 
 ```bash
 ./setup_workspaces.sh
-docker compose exec -T postgres psql -U bluegreen -d bluegreen \
-  -c "INSERT INTO bluegreen_users (user_id, user_name) VALUES (1001, 'your_jenkins_username') ON CONFLICT DO NOTHING;"
-./create_workspace.sh your_jenkins_username workspace_1
+docker compose up -d pgadmin jenkins
+docker compose ps
 ```
 
-The workspace creation command refuses usernames absent from the registry,
-users already in `ACTIVE_USERS`, and existing or partially created
-workspace role/database pairs.
-It does not stop or purge containers or volumes.
+Open pgAdmin at <http://localhost:5050> and Jenkins at
+<http://localhost:18080>. Since the Jenkins volume was deleted, unlock Jenkins
+using its new initial password, install plugins, create a local administrator,
+and recreate the Pipeline job and the Git and `bluegreen-postgres-admin`
+credentials described above. Get the initial password with:
+
+```bash
+docker compose exec jenkins cat /var/jenkins_home/secrets/initialAdminPassword
+```
+
+In pgAdmin's Query Tool connected to the `bluegreen` database, insert each
+developer into `bluegreen_users`, providing a unique `user_id` and the exact
+workspace name, as shown in [Register a developer](#register-a-developer). Then
+run the Jenkins job with the desired `BRANCH` and that exact `WORKSPACE_NAME`.
+Review and approve the fixture load when Jenkins pauses. After a successful
+deployment, Jenkins records the developer in `active_users`.
