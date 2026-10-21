@@ -1,3 +1,5 @@
+import groovy.util.XmlSlurper
+
 pipeline {
     agent any
 
@@ -48,43 +50,56 @@ pipeline {
             }
         }
 
+        stage('Load deployment configuration') {
+            steps {
+                script {
+                    def deployment = new XmlSlurper().parseText(readFile('deployment.xml'))
+                    env.SQL_CHECK_WORKSPACE_STATUS = deployment.CHECKWORKSPACESTATUS.text()
+                    env.SQL_CREATE_WORKSPACE = deployment.CREATEWORKSPACE.text()
+                    env.SQL_INSTALL_ALL_OBJECTS = deployment.INSTALLALLOBJECTS.text()
+                    env.SQL_INSTALL_ALL_FIXTURES = deployment.INSTALLALLFIXTURES.text()
+                    env.SQL_REGISTER_ACTIVE_USER = deployment.REGISTERACTIVEUSER.text()
+                }
+            }
+        }
+
         stage('Check workspace status') {
             steps {
                 script {
                     env.WORKSPACE_NAME = params.WORKSPACE_NAME
                 }
-                sh '$PSQL -v "requested_user=$WORKSPACE_NAME" -d "$PGDATABASE" -f database/jenkins/check_workspace_status.sql'
+                sh '$PSQL -v "requested_user=$WORKSPACE_NAME" -d "$PGDATABASE" -f "$SQL_CHECK_WORKSPACE_STATUS"'
             }
         }
 
         stage('Create role, database, and schema') {
             steps {
-                sh '$PSQL -v "workspace=$WORKSPACE_NAME" -d postgres -f database/jenkins/create_workspace.sql'
+                sh '$PSQL -v "workspace=$WORKSPACE_NAME" -d postgres -f "$SQL_CREATE_WORKSPACE"'
             }
         }
 
         stage('Apply DDL in dependency order') {
             steps {
-                sh '$PSQL -v "workspace=$WORKSPACE_NAME" -d "$WORKSPACE_NAME" -f database/deploy/ddl/install_all_objects.sql'
+                sh '$PSQL -v "workspace=$WORKSPACE_NAME" -d "$WORKSPACE_NAME" -f "$SQL_INSTALL_ALL_OBJECTS"'
             }
         }
 
         stage('Approve fixture data load') {
             steps {
-                input message: "Review database/deploy/dml/manifest.txt and its SQL files before loading data into ${env.WORKSPACE_NAME}.",
+                input message: "Review ${env.SQL_INSTALL_ALL_FIXTURES} and the DML files before loading data into ${env.WORKSPACE_NAME}.",
                       ok: 'Approve fixture data load'
             }
         }
 
         stage('Load fixture data') {
             steps {
-                sh '$PSQL --single-transaction -v "workspace=$WORKSPACE_NAME" -d "$WORKSPACE_NAME" -f database/deploy/dml/install_all_fixtures.sql'
+                sh '$PSQL --single-transaction -v "workspace=$WORKSPACE_NAME" -d "$WORKSPACE_NAME" -f "$SQL_INSTALL_ALL_FIXTURES"'
             }
         }
 
         stage('Register workspace in ACTIVE_USERS') {
             steps {
-                sh '$PSQL -v "requested_user=$WORKSPACE_NAME" -d "$PGDATABASE" -f database/jenkins/register_active_user.sql'
+                sh '$PSQL -v "requested_user=$WORKSPACE_NAME" -d "$PGDATABASE" -f "$SQL_REGISTER_ACTIVE_USER"'
             }
         }
     }
