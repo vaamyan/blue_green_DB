@@ -2,7 +2,7 @@
 SET search_path TO :"workspace", pg_catalog;
 
 CREATE TABLE table_1 (
-    column_1 bigint NOT NULL DEFAULT nextval('sequence_1'),
+    column_1 bigint NOT NULL,
     column_2 text NOT NULL,
     column_3 text NOT NULL,
     column_4 type_1 NOT NULL DEFAULT 'active',

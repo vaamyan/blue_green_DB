@@ -52,63 +52,35 @@ scope for the initial milestone.
 ├── setup_workspaces.sh
 ├── create_workspace.sh
 ├── create_initial_content.sh
-├── jenkins
+├── jenkins/
 │   └── Dockerfile
-├── scripts
-│   └── jenkins
-│       ├── activate_and_validate_workspace.sh
-│       ├── apply_workspace_ddl.sh
-│       ├── check_workspace_eligibility.sh
-│       ├── load_workspace_fixtures.sh
-│       ├── provision_workspace.sh
-│       ├── register_active_workspace.sh
-│       ├── validate_manifests.sh
-│       └── verify_side_effects_disabled.sh
-└── database
-    ├── admin
+├── scripts/jenkins/
+│   ├── apply_workspace_ddl.sh
+│   ├── check_workspace_eligibility.sh
+│   ├── provision_workspace.sh
+│   ├── register_active_workspace.sh
+│   └── validate_manifests.sh
+└── database/
+    ├── admin/
     │   └── create_bluegreen_objects.sql
-    ├── jenkins
+    ├── jenkins/
     │   ├── check_active_user.sql
     │   ├── check_workspace_objects.sql
     │   ├── create_workspace_database.sql
     │   ├── create_workspace_role.sql
     │   ├── create_workspace_schema.sql
-    │   ├── disable_trigger_1.sql
-    │   ├── enable_runtime_objects.sql
     │   ├── register_active_user.sql
-    │   ├── select_registered_user.sql
-    │   ├── validate_workspace.sql
-    │   └── verify_side_effects_disabled.sql
-    ├── deploy
-    │   ├── ddl
-    │   │   ├── manifest.txt
-    │   │   ├── aggregate/
-    │   │   ├── constraint/
-    │   │   ├── domain/
-    │   │   ├── function/
-    │   │   ├── index/
-    │   │   ├── materialized_view/
-    │   │   ├── operator/
-    │   │   ├── policy/
-    │   │   ├── procedure/
-    │   │   ├── publication/
-    │   │   ├── rule/
-    │   │   ├── security/
-    │   │   ├── sequence/
-    │   │   ├── statistics/
-    │   │   ├── table/
-    │   │   ├── text_search/
-    │   │   ├── trigger/
-    │   │   ├── type/
-    │   │   └── view/
-    │   ├── dev/
-    │   └── dml
-    │       ├── manifest.txt
-    │       ├── materialized_view_1.sql
-    │       ├── table_1.sql
-    │       ├── table_2.sql
-    │       ├── table_4.sql
-    │       └── table_5.sql
+    │   └── select_registered_user.sql
+    └── deploy/
+        ├── ddl/
+        │   ├── install_all_objects.sql
+        │   ├── manifest.txt
+        │   └── <object_type>/*.sql
+        └── dml/
+            ├── install_all_fixtures.sql
+            ├── manifest.txt
+            ├── materialized_view_1.sql
+            └── table_1.sql ... table_4.sql
 ```
 
 ## Requirements
@@ -176,20 +148,20 @@ a free-form build parameter alone does not prove who started the job.
 Each SQL file in `database/deploy/ddl/<object_type>/` creates
 one PostgreSQL object and follows the `<object_type>_<number>.sql`
 naming pattern. Sequence and sequence-ownership scripts are grouped together
-under `sequence/` for later consolidation. Object names and filenames use
+under `sequence/`. Object names and filenames use
 stable numbers within each object type. `database/deploy/ddl/manifest.txt`
-defines DDL dependency order; `database/deploy/dml/manifest.txt` defines
-fixture load order. The local shell helper uses the DDL manifest.
+records DDL dependency order. `install_all_objects.sql` calls the DDL files
+in that order with psql `\ir` commands. `database/deploy/dml/manifest.txt`
+defines fixture load order.
 
 The files use generic numbered identifiers for all user-created objects
-and columns. `table_1` holds the primary fixture rows; `table_2` is a
-partitioned table with `table_3` as its partition; `table_4` holds
-role-scoped rows; and `table_5` stores export configuration. The object
-set includes indexes, constraints, sequences, views, a materialized
-view, user-defined types, a domain, functions, a procedure, a trigger, a
-rule, an aggregate, an operator, a row-level security policy, text-search
-objects, extended statistics, and a publication. PostgreSQL creates the
-range type's associated multirange as part of the parent type.
+and columns. `table_1` through `table_4` are independent tables. Each table
+has its own sequence and a `BEFORE INSERT` trigger that assigns `column_1`
+from its own sequence when an insert omits the ID. The object set also includes indexes, constraints, sequences, views, a
+materialized view, user-defined types, a domain, functions, a procedure,
+four triggers, an aggregate, an operator, a row-level security policy,
+text-search objects, extended statistics, and a publication. PostgreSQL creates the range type's associated multirange as
+part of the parent type.
 
 The publication defines which table could be replicated. Logical
 replication also requires `wal_level = logical` and a subscriber. Table
@@ -200,29 +172,14 @@ The scripts do not create event triggers or foreign-data wrappers, which
 require superuser privileges. Extensions depend on installed packages
 and their trust settings.
 
-## Export configuration
-
-`table_5` stores per-table metadata for a future Blue-Green
-export/import process. `column_1` identifies a table, `column_2` sets
-its processing order, and `column_3` selects configuration copy
-(`CONFIG`), source-schema copy (`BLUEGREEN_SOURCE`), or exclusion
-(`NONE`). `column_4` optionally overrides the source schema. `column_5`
-and `column_6` list related triggers and sequences; `column_7` enables
-or disables a row, and `column_8` stores a note.
-
-This table is configuration only; the export/import engine is a later
-milestone. Its DML registers `table_5` first, followed by `table_1`,
-`table_2`, and `table_4`. Rows for `table_2` are routed to `table_3` by
-partitioning.
-
 ## Workspace data
 
 Initial fixture DML is organized under `database/deploy/dml/`, with one
-file per target object. `table_5.sql` loads export configuration first,
-followed by `table_1.sql`, `table_2.sql`, and `table_4.sql`;
-`materialized_view_1.sql` refreshes derived data last. The DML files are
-repeatable. Rows inserted into `table_2` are routed to its partition,
-`table_3`.
+file per target table. `install_all_fixtures.sql` includes the files in the
+order listed by `manifest.txt`; `materialized_view_1.sql` refreshes derived
+data last. Jenkins executes the installer in a single transaction. The DML
+files are repeatable, and each table's trigger assigns its own ID from its
+sequence.
 
 The local helper can create a registered user's workspace and apply its DDL
 and DML:
@@ -375,20 +332,14 @@ name must be 1-63 ASCII letters, digits, dots, underscores, or hyphens. The
 Jenkins job must be access-controlled: a free-form `WORKSPACE_NAME` parameter
 proves registry membership, but does not prove the builder's identity.
 
-The stages validate both manifests and the registry entry, check workspace
-availability, create the role/database/schema, apply DDL in manifest order,
-verify the trigger is disabled, pause for manual review before loading fixture
-data in one transaction, create the view rule and enable the trigger, validate
-fixture counts and the materialized view, then register the user in
-`ACTIVE_USERS`. A failure
-before registration leaves any partially provisioned objects for inspection;
-the pipeline does not silently delete them. PostgreSQL has no disabled state
-for sequences: their values change only when `nextval` or `setval` is called.
-The fixture DML intentionally advances its owned sequences; PostgreSQL
-sequence increments are not rolled back with the data transaction. The sample
-trigger remains disabled while fixture DML runs. PostgreSQL does not support
-disabling rules on views, so the view rule is created after fixture loading;
-it is active for validation and subsequent use.
+The stages check workspace eligibility, create the role/database/schema,
+apply DDL through `install_all_objects.sql`, pause for manual fixture review,
+load DML through `install_all_fixtures.sql` in one transaction, then register
+the user in `ACTIVE_USERS`. A failure
+before registration leaves partially provisioned objects for inspection; the
+pipeline does not silently delete them. The ID triggers stay enabled during
+fixture loading and call their table's sequence when an insert omits the ID.
+PostgreSQL sequence increments are not rolled back with a failed transaction.
 
 Use synthetic data only. Do not store real employer, customer, or
 personal information in this lab.

@@ -64,13 +64,7 @@ pipeline {
 
         stage('Apply DDL in dependency order') {
             steps {
-                sh './scripts/jenkins/apply_workspace_ddl.sh "$WORKSPACE_NAME"'
-            }
-        }
-
-        stage('Verify trigger is inactive') {
-            steps {
-                sh './scripts/jenkins/verify_side_effects_disabled.sh "$WORKSPACE_NAME"'
+                sh 'psql -X -w -v ON_ERROR_STOP=1 -v "workspace=$WORKSPACE_NAME" -d "$WORKSPACE_NAME" -f database/deploy/ddl/install_all_objects.sql'
             }
         }
 
@@ -83,13 +77,7 @@ pipeline {
 
         stage('Load fixture data') {
             steps {
-                sh './scripts/jenkins/load_workspace_fixtures.sh "$WORKSPACE_NAME"'
-            }
-        }
-
-        stage('Enable runtime objects and validate') {
-            steps {
-                sh './scripts/jenkins/activate_and_validate_workspace.sh "$WORKSPACE_NAME"'
+                sh 'psql -X -w --single-transaction -v ON_ERROR_STOP=1 -v "workspace=$WORKSPACE_NAME" -d "$WORKSPACE_NAME" -f database/deploy/dml/install_all_fixtures.sql'
             }
         }
 

@@ -48,9 +48,9 @@ printf 'Deploying DDL to %s...\n' "$workspace"
 ./create_initial_content.sh "$workspace"
 
 dml_files=(
-  table_5.sql
   table_1.sql
   table_2.sql
+  table_3.sql
   table_4.sql
   materialized_view_1.sql
 )

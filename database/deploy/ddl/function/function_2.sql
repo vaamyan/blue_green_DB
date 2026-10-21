@@ -4,7 +4,9 @@ SET search_path TO :"workspace", pg_catalog;
 CREATE FUNCTION function_2()
 RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
-    NEW.column_7 := clock_timestamp();
+    IF NEW.column_1 IS NULL THEN
+        NEW.column_1 := nextval(format('%I.sequence_1', TG_TABLE_SCHEMA)::regclass);
+    END IF;
     RETURN NEW;
 END;
 $$;

@@ -1,4 +1,4 @@
--- Seed synthetic rows in table_4 for the connected workspace role.
+-- Seed role-scoped fixture rows in table_4; trigger_4 assigns column_1.
 SET search_path TO :"workspace", pg_catalog;
 
 INSERT INTO table_4 (column_3)

@@ -10,22 +10,6 @@ workspace="${1:-}"
   exit 2
 }
 
-while IFS= read -r file; do
-  if [[ "$file" == rule/rule_1.sql ]]; then
-    printf 'Deferring database/deploy/ddl/%s until fixture loading is complete\n' "$file"
-    continue
-  fi
-
-  printf 'Applying database/deploy/ddl/%s\n' "$file"
-  psql -X -w -v ON_ERROR_STOP=1 -d "$workspace" \
-    -v "workspace=$workspace" \
-    -c "SET ROLE \"$workspace\"" \
-    -f "database/deploy/ddl/$file"
-
-  case "$file" in
-    trigger/trigger_1.sql)
-      psql -X -w -v ON_ERROR_STOP=1 -d "$workspace" \
-        -v "workspace=$workspace" -f database/jenkins/disable_trigger_1.sql
-      ;;
-  esac
-done < <(sed '/^[[:space:]]*#/d; /^[[:space:]]*$/d' database/deploy/ddl/manifest.txt)
+psql -X -w -v ON_ERROR_STOP=1 -d "$workspace" \
+  -v "workspace=$workspace" \
+  -f database/deploy/ddl/install_all_objects.sql
