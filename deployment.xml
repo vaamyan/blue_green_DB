@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<DEPLOYMENT>
+    <CHECKWORKSPACESTATUS>database/jenkins/check_workspace_status.sql</CHECKWORKSPACESTATUS>
+    <CREATEWORKSPACE>database/jenkins/create_workspace.sql</CREATEWORKSPACE>
+    <INSTALLALLOBJECTS>database/deploy/ddl/install_all_objects.sql</INSTALLALLOBJECTS>
+    <INSTALLALLFIXTURES>database/deploy/dml/install_all_fixtures.sql</INSTALLALLFIXTURES>
+    <REGISTERACTIVEUSER>database/jenkins/register_active_user.sql</REGISTERACTIVEUSER>
+</DEPLOYMENT>
