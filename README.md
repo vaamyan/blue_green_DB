@@ -49,7 +49,6 @@ scope for the initial milestone.
 ├── docker-compose.yml
 ├── README.md
 ├── Jenkinsfile
-├── deployment.xml
 ├── setup_workspaces.sh
 ├── create_workspace.sh
 ├── create_initial_content.sh
@@ -359,19 +358,34 @@ does not change the branch Jenkins used to load the Jenkinsfile.
 
 ### Step 7: Load the build parameters
 
-The Jenkinsfile defines two parameters:
+The `Jenkinsfile` reads `BRANCH` and `WORKSPACE_NAME`, but does not declare
+them. Configure both parameters in the Jenkins job:
+
+1. Open the job and click **Configure**.
+2. Under **General**, select **This project is parameterized**.
+3. Click **Add Parameter** and select **String Parameter**.
+4. Add the first parameter with this name and value:
 
 | Parameter | What to enter |
 |---|---|
-| `BRANCH` | Git branch to deploy, such as `main` |
-| `WORKSPACE_NAME` | Exact `user_name` registered in `bluegreen_users` |
+| Name | `BRANCH` |
+| Default Value | `main`, or leave it blank to require an entry for each build |
+| Description | Git branch to deploy, such as `main` |
 
-On a newly created job, Jenkins may show **Build Now** before it has loaded
-these parameter definitions. If so, click **Build Now** once. That first run
-uses the blank default workspace name and is expected to fail at **Check
-workspace status**; this check runs before role or database creation. After
-that, use **Build with Parameters**. If that button is already available, skip
-the initial **Build Now**.
+5. Add a second **String Parameter**:
+
+| Setting | Value |
+|---|---|
+| Name | `WORKSPACE_NAME` |
+| Default Value | Leave blank |
+| Description | Exact `user_name` registered in `bluegreen_users` |
+
+6. Click **Save**. The job page should now show **Build with Parameters**.
+
+Do not add the parameters a second time in the `Jenkinsfile`; the job
+configuration is their source. The names must match exactly, including
+uppercase letters, because the Pipeline reads `params.BRANCH` and
+`params.WORKSPACE_NAME`.
 
 ### Step 8: Run the workspace deployment
 
@@ -395,10 +409,10 @@ When the build succeeds, the workspace role and database use the exact
 fails, Jenkins does not automatically delete a partially created role or
 database. Inspect the PostgreSQL state before retrying.
 
-If Jenkins reports a pending Groovy **Script Approval** for reading
-`deployment.xml`, a Jenkins administrator can review it under **Manage Jenkins
-> Script Approval**. If Git reports an SSH host-key verification error, resolve
-the host-key verification configuration before retrying the job.
+The SQL file paths used by the deployment Pipeline are set directly in the
+`Jenkinsfile` environment block. Update those values there when a SQL entry
+point moves. If Git reports an SSH host-key verification error, resolve the
+host-key verification configuration before retrying the job.
 
 Use synthetic data only. Do not store real employer, customer, or personal
 information in this lab.

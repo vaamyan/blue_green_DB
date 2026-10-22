@@ -1,5 +1,3 @@
-import groovy.util.XmlSlurper
-
 pipeline {
     agent any
 
@@ -10,15 +8,15 @@ pipeline {
         timeout(time: 60, unit: 'MINUTES')
     }
 
-    parameters {
-        string(name: 'BRANCH', defaultValue: 'main', description: 'Git branch to deploy.')
-        string(name: 'WORKSPACE_NAME', defaultValue: '', description: 'Exact registered user_name from BLUEGREEN_USERS; also used as the role, database, and schema name.')
-    }
-
     environment {
         BLUEGREEN_ADMIN_CREDENTIALS = credentials('bluegreen-postgres-admin')
         PGDATABASE = 'bluegreen'
-        PSQL = 'psql -X -w -v ON_ERROR_STOP=1'
+        CMDPSQL = 'psql -X -w -v ON_ERROR_STOP=1'
+        SQL_CHECK_WORKSPACE_STATUS = 'database/jenkins/check_workspace_status.sql'
+        SQL_CREATE_WORKSPACE = 'database/jenkins/create_workspace.sql'
+        SQL_INSTALL_ALL_OBJECTS = 'database/deploy/ddl/install_all_objects.sql'
+        SQL_INSTALL_ALL_FIXTURES = 'database/deploy/dml/install_all_fixtures.sql'
+        SQL_REGISTER_ACTIVE_USER = 'database/jenkins/register_active_user.sql'
     }
 
     stages {
@@ -50,37 +48,24 @@ pipeline {
             }
         }
 
-        stage('Load deployment configuration') {
-            steps {
-                script {
-                    def deployment = new XmlSlurper().parseText(readFile('deployment.xml'))
-                    env.SQL_CHECK_WORKSPACE_STATUS = deployment.CHECKWORKSPACESTATUS.text()
-                    env.SQL_CREATE_WORKSPACE = deployment.CREATEWORKSPACE.text()
-                    env.SQL_INSTALL_ALL_OBJECTS = deployment.INSTALLALLOBJECTS.text()
-                    env.SQL_INSTALL_ALL_FIXTURES = deployment.INSTALLALLFIXTURES.text()
-                    env.SQL_REGISTER_ACTIVE_USER = deployment.REGISTERACTIVEUSER.text()
-                }
-            }
-        }
-
         stage('Check workspace status') {
             steps {
                 script {
                     env.WORKSPACE_NAME = params.WORKSPACE_NAME
                 }
-                sh '$PSQL -v "requested_user=$WORKSPACE_NAME" -d "$PGDATABASE" -f "$SQL_CHECK_WORKSPACE_STATUS"'
+                sh '$CMDPSQL -v "requested_user=$WORKSPACE_NAME" -d "$PGDATABASE" -f "$SQL_CHECK_WORKSPACE_STATUS"'
             }
         }
 
         stage('Create role, database, and schema') {
             steps {
-                sh '$PSQL -v "workspace=$WORKSPACE_NAME" -d postgres -f "$SQL_CREATE_WORKSPACE"'
+                sh '$CMDPSQL -v "workspace=$WORKSPACE_NAME" -d postgres -f "$SQL_CREATE_WORKSPACE"'
             }
         }
 
         stage('Apply DDL in dependency order') {
             steps {
-                sh '$PSQL -v "workspace=$WORKSPACE_NAME" -d "$WORKSPACE_NAME" -f "$SQL_INSTALL_ALL_OBJECTS"'
+                sh '$CMDPSQL -v "workspace=$WORKSPACE_NAME" -d "$WORKSPACE_NAME" -f "$SQL_INSTALL_ALL_OBJECTS"'
             }
         }
 
@@ -93,13 +78,13 @@ pipeline {
 
         stage('Load fixture data') {
             steps {
-                sh '$PSQL --single-transaction -v "workspace=$WORKSPACE_NAME" -d "$WORKSPACE_NAME" -f "$SQL_INSTALL_ALL_FIXTURES"'
+                sh '$CMDPSQL --single-transaction -v "workspace=$WORKSPACE_NAME" -d "$WORKSPACE_NAME" -f "$SQL_INSTALL_ALL_FIXTURES"'
             }
         }
 
         stage('Register workspace in ACTIVE_USERS') {
             steps {
-                sh '$PSQL -v "requested_user=$WORKSPACE_NAME" -d "$PGDATABASE" -f "$SQL_REGISTER_ACTIVE_USER"'
+                sh '$CMDPSQL -v "requested_user=$WORKSPACE_NAME" -d "$PGDATABASE" -f "$SQL_REGISTER_ACTIVE_USER"'
             }
         }
     }
