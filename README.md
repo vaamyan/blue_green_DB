@@ -1,45 +1,41 @@
-# Blue-Green Deployment Lab
+# Blue-Green Database Deployment Lab
 
-A portfolio project for practicing Blue-Green deployments, database
-schema changes, and controlled promotion of a release from UAT to
-Production.
+A local PostgreSQL environment for developing isolated workspaces and
+practicing controlled database deployments through BlueGreen.
 
-> **Current status:** local PostgreSQL database with Docker Compose.
-> The API, Blue-Green traffic routing, CI/CD, and automatic rollback are
-> planned for later milestones.
+> **Current status:** PostgreSQL, pgAdmin, Jenkins, and development workspace
+> deployment are available locally. Export, environment deletion, higher
+> environment deployment, and switching are planned work.
 
 ## Goals
 
-- Deploy a candidate revision to UAT and promote the same revision to
-  Production after validation.
-- Keep the active version available while the candidate is deployed and
-  checked.
-- Practice schema changes that remain compatible with both versions.
-- Isolate developer work environments.
+- Isolate developer work in individual DEV workspaces.
+- Export selected changes from a DEV workspace into deployment files.
+- Deploy database changes to UAT and Production through BlueGreen.
+- Switch to a deployed environment and switch back to the previous one when
+  needed.
+- Delete a selected environment.
 - Use synthetic data only.
 
-## Planned architecture
+## Environment workflow
 
 ```text
-Development branch
-        |
-        v
-GitHub Actions: tests and build
-        |
-        v
-UAT: deploy candidate -> health checks -> acceptance tests
-        |
-        v
-Manual approval / promote the same validated revision
-        |
-        v
-PROD: deploy to inactive color -> validate -> switch traffic
+DEV workspace -> Export -> BlueGreen deploy to UAT or Production
+                                  |                 |
+                                  v                 v
+                              Switch to new environment
+                                  |
+                                  v
+                         Reverse switch to previous environment
 ```
 
-The local lab uses PostgreSQL, pgAdmin, and an optional Jenkins container
-managed by Docker Compose. A Python API, Nginx router, and production
-Blue-Green traffic switching remain future milestones. Kubernetes is out of
-scope for the initial milestone.
+UAT and Production are deployment targets for the same BlueGreen workflow.
+The developer workspace export, environment deletion, higher environment
+deployment, switch, and reverse switch are planned milestones; this diagram
+describes the intended workflow, not functionality that is already available.
+
+The local lab uses PostgreSQL, pgAdmin, and Jenkins containers managed by
+Docker Compose.
 
 ## Current repository structure
 
@@ -182,34 +178,16 @@ docker compose exec postgres psql -U bluegreen -d postgres \
   -c "SELECT rolname, rolsuper, rolcreatedb, (rolsuper OR rolcreatedb) AS can_create_databases FROM pg_roles WHERE rolname = 'bluegreen' OR rolname LIKE 'workspace_%' ORDER BY rolname;"
 ```
 
-## Database and deployment design principles
-
-Blue and Green represent application versions; they do not require
-separate Production databases by default. Schema changes should remain
-compatible with both versions during a transition. Prefer an
-**expand-and-contract** sequence:
-
-1. Add a backward-compatible schema change.
-2. Deploy and validate the new version.
-3. Switch traffic and monitor health.
-4. Remove obsolete schema elements after the old version no longer uses
-   them.
-
-A traffic rollback does not automatically reverse writes or destructive
-schema changes. Migrations and data recovery need their own plan. For
-Production, promote the same immutable artifact that passed UAT.
-
 ## Planned milestones
 
 - [x] Choose PostgreSQL and prepare the local database foundation.
 - [x] Add a registry-backed workspace creation prototype.
 - [x] Add PostgreSQL object examples for each workspace.
-- [ ] Create Blue and Green versions of the Python API.
-- [ ] Add health checks and integration tests.
-- [ ] Implement traffic switching and rollback.
-- [ ] Add CI and UAT deployment.
-- [ ] Add approval-gated Production promotion.
-- [ ] Document migrations and data preservation between versions.
+- [ ] Export selected changes from a DEV workspace into deployment files.
+- [ ] Delete a selected workspace or environment.
+- [ ] Deploy database changes through BlueGreen to UAT and Production.
+- [ ] Switch to the newly deployed environment.
+- [ ] Reverse the switch and return to the previous environment.
 
 ## Jenkins workspace deployment
 
