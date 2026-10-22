@@ -268,17 +268,30 @@ the filename, the public key (`id_ed25519.pub`), or your GitHub account name in
 the private-key field. The matching public key must be authorized for read
 access to the repository in GitHub.
 
+When configuring the job, select this SSH credential for the Git repository.
+Jenkins may display it as `git`, depending on the credential label. Confirm it
+is the **SSH Username with private key** credential. Do not select
+`bluegreen`; that credential is for PostgreSQL.
+
 Add the matching public key to GitHub under **Settings > SSH and GPG keys >
 New SSH key**. The public key is the `.pub` file; Jenkins receives the private
 key. The GitHub account that owns the key must have read access to
 `vaamyan/blue_green_DB`.
 
-If Git later reports `No ED25519 host key is known`, that is a separate check
-of GitHub's server identity, not a problem with the private-key credential. In
-Jenkins, open **Manage Jenkins > Security > Git Host Key Verification
-Configuration** and configure GitHub host-key verification. For this local
-lab, **Accept first connection** can be used; for stricter verification,
-provide GitHub's verified host key through the known-hosts configuration.
+If Jenkins reports `No ED25519 host key is known for github.com and you have
+requested strict checking`, the connection is failing at SSH host-key
+verification, before repository access is checked. This is separate from the
+private-key credential, so changing the branch will not fix it. In Jenkins:
+
+1. Open **Manage Jenkins > Security > Git Host Key Verification Configuration**.
+2. Change the strategy to **Accept first connection**.
+3. Save the setting and retry the job.
+
+This strategy remembers the server key on the first connection and checks it
+on later connections. Alternatively, use **Known hosts file** or **Manually
+provided keys** with GitHub's verified host key. Do not choose **No
+verification**, which disables host-key protection. See the [Jenkins Git Client
+plugin documentation](https://plugins.jenkins.io/git-client/#plugin-content-ssh-host-key-verification).
 
 ### Step 4: Create the PostgreSQL administrator credential
 
@@ -332,7 +345,7 @@ select **Pipeline**, and click **OK**. In the job's **Pipeline** section, set:
 | Definition | **Pipeline script from SCM** |
 | SCM | **Git** |
 | Repository URL | `git@github.com:vaamyan/blue_green_DB.git` |
-| Credentials | `github-repository-read` |
+| Credentials | Select the SSH key credential created in Step 3 (it may appear as `git`) |
 | Branches to build | `*/main` |
 | Script Path | `Jenkinsfile` |
 
