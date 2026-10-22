@@ -214,123 +214,181 @@ Production, promote the same immutable artifact that passed UAT.
 
 ## Jenkins workspace deployment
 
-Jenkins is an optional container, separate from PostgreSQL. Its web interface
-is published only on this machine at <http://localhost:18080>. The container
-joins the Compose network and reaches PostgreSQL at `postgres:5432`; `localhost`
-inside Jenkins would mean the Jenkins container itself. PostgreSQL remains
-bound to host loopback on port `5432`.
+Jenkins runs in a separate container from PostgreSQL. Open its local interface
+at <http://localhost:18080>. Inside the Jenkins container, PostgreSQL is
+reachable at `postgres:5432` (not `localhost`). The steps below assume you are
+working from the repository root.
 
-For a clean first-time startup, run the database bootstrap, then start pgAdmin
-and Jenkins:
+### Step 1: Start PostgreSQL, pgAdmin, and Jenkins
+
+For a new or purged environment, create the Blue-Green database and its control
+tables, then start the web interfaces. Make sure `.env` has both
+`POSTGRES_PASSWORD` and `PGADMIN_PASSWORD` before starting:
 
 ```bash
 ./setup_workspaces.sh
 docker compose up -d pgadmin jenkins
-docker compose ps
+docker compose ps jenkins
 ```
 
-Run these commands from the repository directory. Once the container is
-running, open <http://localhost:18080> in your browser. Jenkins is available
-only on this machine; no account on jenkins.io is required.
+If the database and control tables already exist and the containers are merely
+stopped, start them with `docker compose start postgres pgadmin jenkins`.
 
-On the first visit, Jenkins asks for its initial administrator password. Get
-it from the container with:
+### Step 2: Unlock Jenkins and create its local administrator
+
+Open <http://localhost:18080>. On the first launch, retrieve the initial
+administrator password:
 
 ```bash
 docker compose exec jenkins cat /var/jenkins_home/secrets/initialAdminPassword
 ```
 
-Paste the password into the unlock page, install the suggested plugins, and
-create a Jenkins administrator account. This account is local to this Jenkins
-instance; there is no external Jenkins signup account. See the [official
-Jenkins Docker setup guide](https://www.jenkins.io/doc/book/installing/docker/)
-for details about the initial unlock process.
+Paste that password into the unlock page, choose **Install suggested plugins**,
+and create a Jenkins administrator account. This account is only for signing
+in to this Jenkins instance; it is not your GitHub account or a PostgreSQL
+account. The `jenkins_data` volume preserves this setup unless you purge it.
 
-To stop Jenkins while keeping its configuration, jobs, plugins, and accounts,
-run:
+### Step 3: Create the Git repository credential
 
-```bash
-docker compose stop jenkins
-```
+In Jenkins, open **Manage Jenkins > Credentials > System > Global credentials**
+and choose **Add Credentials**. Select these values:
 
-Start it again later with:
+| Field | Value |
+|---|---|
+| Kind | **SSH Username with private key** |
+| Scope | **Global** |
+| Username | `git` |
+| Private Key | **Enter directly**, then paste the complete contents of your private key file (for example, `id_ed25519`) |
+| Passphrase | Enter the key's passphrase, if it has one |
+| ID | `github-repository-read` |
 
-```bash
-docker compose start jenkins
-```
+The SSH username is `git`, not your GitHub username. Paste the private key
+contents including the `BEGIN` and `END OPENSSH PRIVATE KEY` lines. Do not paste
+the filename, the public key (`id_ed25519.pub`), or your GitHub account name in
+the private-key field. The matching public key must be authorized for read
+access to the repository in GitHub.
 
-To check whether Jenkins is running, use:
+Add the matching public key to GitHub under **Settings > SSH and GPG keys >
+New SSH key**. The public key is the `.pub` file; Jenkins receives the private
+key. The GitHub account that owns the key must have read access to
+`vaamyan/blue_green_DB`.
 
-```bash
-docker compose ps jenkins
-```
+If Git later reports `No ED25519 host key is known`, that is a separate check
+of GitHub's server identity, not a problem with the private-key credential. In
+Jenkins, open **Manage Jenkins > Security > Git Host Key Verification
+Configuration** and configure GitHub host-key verification. For this local
+lab, **Accept first connection** can be used; for stricter verification,
+provide GitHub's verified host key through the known-hosts configuration.
 
-The initial administrator password is needed only for the first unlock. Jenkins
-stores its setup in the `jenkins_data` volume, so stopping or restarting the
-container does not repeat the first-time setup.
+### Step 4: Create the PostgreSQL administrator credential
 
-Create a **Pipeline** job in the Jenkins UI. Under **Pipeline**, choose
-**Pipeline script from SCM**, select **Git**, enter the repository URL and
-the Git read credential if required, and set the script path to `Jenkinsfile`.
-The branch configured here supplies the Jenkinsfile that starts the run. The
-pipeline then checks out the branch supplied in the `BRANCH` parameter for its
-SQL and deployment files. Keep those branch values aligned when the Jenkinsfile
-itself must also come from that branch.
+In the same **Global credentials** section, choose **Add Credentials** again:
 
-The Jenkinsfile defines `BRANCH` (default `main`) and `WORKSPACE_NAME` (default
-blank). After the job loads these parameters, choose **Build with Parameters**.
-Set `BRANCH` to the Git branch to deploy and set `WORKSPACE_NAME` to the exact
-registered value in `BLUEGREEN_USERS`.
+| Field | Value |
+|---|---|
+| Kind | **Username with password** |
+| Scope | **Global** |
+| Username | `bluegreen` |
+| Password | The `POSTGRES_PASSWORD` value from `.env` |
+| ID | `bluegreen-postgres-admin` |
 
-Before running a workspace deployment, create a Jenkins **Username with
-password** credential with ID `bluegreen-postgres-admin`, username `bluegreen`,
-and the same administrator password configured as `POSTGRES_PASSWORD` in
-`.env`. The Compose service supplies `BLUEGREEN_DB_HOST=postgres` and
-`BLUEGREEN_DB_PORT=5432`. The custom Jenkins image installs `psql` and Git for
-the pipeline. In this local setup, `agent any` runs on Jenkins's built-in node
-inside the Jenkins container. No Docker socket is mounted into Jenkins; a
-separate build-agent container can be added later to simulate that topology.
+This is the database administrator credential Jenkins uses to connect to
+PostgreSQL. It is separate from both the Jenkins sign-in account and the Git
+credential. The ID must match the value used in `Jenkinsfile`.
 
-`Jenkinsfile` reads SQL paths from `deployment.xml` and invokes those files
-with `psql`. The SQL installer files include DDL and fixture files in their
-required order. The pipeline checks workspace status, creates its role,
-database and schema, applies DDL, pauses for fixture approval, loads fixture
-data, then registers the developer in `ACTIVE_USERS`.
+### Step 5: Register the developer in Blue-Green
 
-Before running the job, add the developer in `BLUEGREEN_USERS` using pgAdmin's
-Query Tool connected to the `bluegreen` database, with your own unused ID and
-the exact name you intend to pass as `WORKSPACE_NAME`:
+Open pgAdmin at <http://localhost:5050> and sign in with `admin@example.com`
+and `PGADMIN_PASSWORD` from `.env`. Register the PostgreSQL server if needed,
+using these connection values:
+
+| Field | Value |
+|---|---|
+| Host name/address | `postgres` |
+| Port | `5432` |
+| Maintenance database | `bluegreen` |
+| Username | `bluegreen` |
+| Password | `POSTGRES_PASSWORD` from `.env` |
+
+Open **Tools > Query Tool** on the `bluegreen` database and insert the
+developer's manually chosen ID and exact workspace name:
 
 ```sql
 INSERT INTO bluegreen_users (user_id, user_name)
 VALUES (1001, 'WORKSPACE01');
 ```
 
-The values above are examples; replace them if either is already in use. The
-parameters are:
+Replace both example values with values you chose. The `user_name` must be
+exactly the value you will enter as `WORKSPACE_NAME`; it becomes the workspace
+role, database, and schema name. A developer can have only one active workspace.
 
-- `BRANCH`: the Git branch to deploy.
-- `WORKSPACE_NAME`: the exact `user_name` registered in `BLUEGREEN_USERS`.
+### Step 6: Create the Pipeline job
 
-The pipeline looks up the matching `user_id`, but uses `WORKSPACE_NAME`
-unchanged as the PostgreSQL role, database, and schema name. It never builds a
-workspace name from the ID. It rejects users already present in `ACTIVE_USERS`
-and refuses to reuse an existing or partially created role or database. The
-name must be 1-63 ASCII letters, digits, dots, underscores, or hyphens. The
-Jenkins job must be access-controlled: a free-form `WORKSPACE_NAME` parameter
-proves registry membership, but does not prove the builder's identity.
+In Jenkins, choose **New Item**, enter a job name such as `deploy-workspace`,
+select **Pipeline**, and click **OK**. In the job's **Pipeline** section, set:
 
-If Jenkins reports a pending Script Approval for loading `deployment.xml`, a
-Jenkins administrator can review it under **Manage Jenkins > Script Approval**.
+| Setting | Value |
+|---|---|
+| Definition | **Pipeline script from SCM** |
+| SCM | **Git** |
+| Repository URL | `git@github.com:vaamyan/blue_green_DB.git` |
+| Credentials | `github-repository-read` |
+| Branches to build | `*/main` |
+| Script Path | `Jenkinsfile` |
 
-A failure before registration leaves partially provisioned objects for
-inspection; the
-pipeline does not silently delete them. The ID triggers stay enabled during
-fixture loading and call their table's sequence when an insert omits the ID.
-PostgreSQL sequence increments are not rolled back with a failed transaction.
+Click **Save**. The **Branches to build** value selects the branch from which
+Jenkins initially loads the `Jenkinsfile`. During the run, the Jenkinsfile
+checks out the branch entered in the `BRANCH` build parameter for the SQL and
+deployment files. These are two separate settings: to run everything from
+`feature_01`, set **Branches to build** to `*/feature_01` in job configuration
+and set `BRANCH` to `feature_01` when building. Setting only the build parameter
+does not change the branch Jenkins used to load the Jenkinsfile.
 
-Use synthetic data only. Do not store real employer, customer, or
-personal information in this lab.
+### Step 7: Load the build parameters
+
+The Jenkinsfile defines two parameters:
+
+| Parameter | What to enter |
+|---|---|
+| `BRANCH` | Git branch to deploy, such as `main` |
+| `WORKSPACE_NAME` | Exact `user_name` registered in `bluegreen_users` |
+
+On a newly created job, Jenkins may show **Build Now** before it has loaded
+these parameter definitions. If so, click **Build Now** once. That first run
+uses the blank default workspace name and is expected to fail at **Check
+workspace status**; this check runs before role or database creation. After
+that, use **Build with Parameters**. If that button is already available, skip
+the initial **Build Now**.
+
+### Step 8: Run the workspace deployment
+
+Click **Build with Parameters**. Enter the branch and exact registered
+workspace name, then click **Build**. The stages check eligibility, create the
+role/database/schema, load DDL, pause for fixture approval, load fixture data,
+and register the developer in `ACTIVE_USERS`.
+
+### Step 9: Approve the fixture load
+
+At **Approve fixture data load**, Jenkins waits for a person to continue. Open
+the paused build, review `database/deploy/dml/install_all_fixtures.sql` and its
+included DML files from the selected branch, then click **Proceed** to continue
+or **Abort** to stop the run. Fixture loading and registration happen only
+after you click **Proceed**.
+
+### Step 10: Check the result
+
+When the build succeeds, the workspace role and database use the exact
+`WORKSPACE_NAME`, and that user is present in `ACTIVE_USERS`. If the build
+fails, Jenkins does not automatically delete a partially created role or
+database. Inspect the PostgreSQL state before retrying.
+
+If Jenkins reports a pending Groovy **Script Approval** for reading
+`deployment.xml`, a Jenkins administrator can review it under **Manage Jenkins
+> Script Approval**. If Git reports an SSH host-key verification error, resolve
+the host-key verification configuration before retrying the job.
+
+Use synthetic data only. Do not store real employer, customer, or personal
+information in this lab.
 
 ## Isolated development environments
 
