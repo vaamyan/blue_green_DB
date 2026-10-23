@@ -1,0 +1,81 @@
+pipeline {
+    agent any
+
+    options {
+        skipDefaultCheckout(true)
+        disableConcurrentBuilds()
+        timestamps()
+        timeout(time: 60, unit: 'MINUTES')
+    }
+
+    environment {
+        BLUEGREEN_ADMIN_CREDENTIALS = credentials('bluegreen-postgres-admin')
+    }
+
+    stages {
+        stage('Checkout selected branch') {
+            steps {
+                script {
+                    if (!params.BRANCH?.trim()) {
+                        error('Enter the Git branch to export to.')
+                    }
+                    if (!params.WORKSPACE_NAME?.trim()) {
+                        error('Enter the exact workspace name to export.')
+                    }
+                    env.BRANCH = params.BRANCH.trim()
+                    env.WORKSPACE_NAME = params.WORKSPACE_NAME.trim()
+                    if (!env.BLUEGREEN_DB_HOST?.trim()) {
+                        error('BLUEGREEN_DB_HOST is not configured for the Jenkins container.')
+                    }
+                    env.PGHOST = env.BLUEGREEN_DB_HOST
+                    env.PGPORT = env.BLUEGREEN_DB_PORT?.trim() ?: '5432'
+                    env.PGUSER = env.BLUEGREEN_ADMIN_CREDENTIALS_USR
+                    env.PGPASSWORD = env.BLUEGREEN_ADMIN_CREDENTIALS_PSW
+                    if (env.PGUSER != 'bluegreen') {
+                        error('The bluegreen-postgres-admin credential must use the bluegreen role.')
+                    }
+                }
+                sh 'git check-ref-format --branch "$BRANCH"'
+                checkout([
+                    $class: 'GitSCM',
+                    branches: [[name: "*/${env.BRANCH}"]],
+                    userRemoteConfigs: scm.userRemoteConfigs
+                ])
+            }
+        }
+
+        stage('Export workspace DDL') {
+            steps {
+                sh 'sh "$WORKSPACE/scripts/jenkins/export_workspace_ddl.sh" "$WORKSPACE_NAME"'
+            }
+        }
+
+        stage('Commit and push export') {
+            steps {
+                withCredentials([sshUserPrivateKey(
+                    credentialsId: 'github-repository-read',
+                    keyFileVariable: 'GIT_SSH_KEY'
+                )]) {
+                    sh '''
+                        git add database/deploy/ddl
+                        if git diff --cached --quiet; then
+                            echo "The export matches the selected branch; there is nothing to commit."
+                        else
+                            git config user.name "BlueGreen Export"
+                            git config user.email "bluegreen-export@localhost"
+                            git commit -m "Export DDL from ${WORKSPACE_NAME}"
+                            GIT_SSH_COMMAND="ssh -i '${GIT_SSH_KEY}' -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new" \
+                                git push origin "HEAD:refs/heads/${BRANCH}"
+                        fi
+                    '''
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "DDL export for ${env.WORKSPACE_NAME} to ${env.BRANCH} completed."
+        }
+    }
+}

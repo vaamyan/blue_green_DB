@@ -3,9 +3,10 @@
 A local PostgreSQL environment for developing isolated workspaces and
 practicing controlled database deployments through BlueGreen.
 
-> **Current status:** PostgreSQL, pgAdmin, Jenkins, and development workspace
-> deployment are available locally. Export, environment deletion, higher
-> environment deployment, and switching are planned work.
+> **Current status:** PostgreSQL, pgAdmin, and Jenkins are available, and the
+> DEV DDL export Pipeline has been added. Run it in Jenkins to confirm the
+> database connection and Git push. Environment deletion, higher environment
+> deployment, and switching remain planned work.
 
 ## Goals
 
@@ -30,9 +31,9 @@ DEV workspace -> Export -> BlueGreen deploy to UAT or Production
 ```
 
 UAT and Production are deployment targets for the same BlueGreen workflow.
-The developer workspace export, environment deletion, higher environment
-deployment, switch, and reverse switch are planned milestones; this diagram
-describes the intended workflow, not functionality that is already available.
+The DEV workspace DDL export Pipeline is implemented but needs its first run
+in Jenkins. Environment deletion, higher environment deployment, switch, and
+reverse switch remain planned milestones.
 
 The local lab uses PostgreSQL, pgAdmin, and Jenkins containers managed by
 Docker Compose.
@@ -45,11 +46,16 @@ Docker Compose.
 ├── docker-compose.yml
 ├── README.md
 ├── Jenkinsfile
+├── Jenkinsfile.export
 ├── setup_workspaces.sh
 ├── create_workspace.sh
 ├── create_initial_content.sh
 ├── jenkins/
 │   └── Dockerfile
+├── scripts/
+│   └── jenkins/
+│       ├── export_workspace_ddl.sh
+│       └── split_pg_dump.awk
 └── database/
     ├── admin/
     │   └── create_bluegreen_objects.sql
@@ -183,7 +189,7 @@ docker compose exec postgres psql -U bluegreen -d postgres \
 - [x] Choose PostgreSQL and prepare the local database foundation.
 - [x] Add a registry-backed workspace creation prototype.
 - [x] Add PostgreSQL object examples for each workspace.
-- [ ] Export selected changes from a DEV workspace into deployment files.
+- [ ] Run the DEV workspace DDL export in Jenkins and confirm the push.
 - [ ] Delete a selected workspace or environment.
 - [ ] Deploy database changes through BlueGreen to UAT and Production.
 - [ ] Switch to the newly deployed environment.
@@ -242,8 +248,8 @@ and choose **Add Credentials**. Select these values:
 The SSH username is `git`, not your GitHub username. Paste the private key
 contents including the `BEGIN` and `END OPENSSH PRIVATE KEY` lines. Do not paste
 the filename, the public key (`id_ed25519.pub`), or your GitHub account name in
-the private-key field. The matching public key must be authorized for read
-access to the repository in GitHub.
+the private-key field. The matching public key must be authorized for write
+access to the repository in GitHub because the export job pushes commits.
 
 When configuring the job, select this SSH credential for the Git repository.
 Jenkins may display it as `git`, depending on the credential label. Confirm it
@@ -252,8 +258,10 @@ is the **SSH Username with private key** credential. Do not select
 
 Add the matching public key to GitHub under **Settings > SSH and GPG keys >
 New SSH key**. The public key is the `.pub` file; Jenkins receives the private
-key. The GitHub account that owns the key must have read access to
-`vaamyan/blue_green_DB`.
+key. The GitHub account that owns the key must have write access to
+`vaamyan/blue_green_DB` for exports. The credential ID remains
+`github-repository-read` so it can also be used by the deploy job; the ID is
+only a Jenkins label and does not grant repository permissions.
 
 If Jenkins reports `No ED25519 host key is known for github.com and you have
 requested strict checking`, the connection is failing at SSH host-key
@@ -391,6 +399,70 @@ The SQL file paths used by the deployment Pipeline are set directly in the
 `Jenkinsfile` environment block. Update those values there when a SQL entry
 point moves. If Git reports an SSH host-key verification error, resolve the
 host-key verification configuration before retrying the job.
+
+## Jenkins DEV DDL export
+
+The export job connects to the selected workspace database as the `bluegreen`
+DBA role. PostgreSQL 16 `pg_dump` reads the schema; its output is split into
+one SQL file per object under `database/deploy/ddl/<object_type>/`. The job
+rebuilds `install_all_objects.sql` in PostgreSQL dependency order and pushes
+the changes to the selected Git branch. It replaces the generated DDL files
+in those folders. DML files are not changed. Overloaded function and procedure
+signatures receive a suffix in the filename so each object has its own file.
+
+The database server cannot write into Jenkins' checked-out Git directory:
+they are separate containers. `bluegreen` reads the database objects, while
+the PostgreSQL client running in Jenkins writes the files into the repository
+checkout. This keeps file creation on the side that can commit and push them.
+
+### Step 1: Rebuild the Jenkins image
+
+The export job uses the PostgreSQL 16 client. Rebuild Jenkins after checking
+out a branch containing the exporter changes:
+
+```bash
+docker compose up -d --build jenkins
+```
+
+### Step 2: Create the export Pipeline job
+
+In Jenkins, choose **New Item**, enter a name such as `export-workspace`,
+select **Pipeline**, and click **OK**. Under **Pipeline**, choose **Pipeline
+script from SCM**, set SCM to **Git**, and use the repository URL and SSH key
+credential from the deploy job. Set **Script Path** to `Jenkinsfile.export`
+and save. Set the SCM branch to the branch containing `Jenkinsfile.export`;
+the `BRANCH` build parameter selects the branch whose DDL is exported and
+updated.
+
+The GitHub key behind `github-repository-read` must have write access for the
+push. Jenkins uses `bluegreen-postgres-admin` to connect to PostgreSQL; no
+separate database credential is needed for export.
+
+### Step 3: Add the build parameters
+
+Open the export job's **Configure** page, select **This project is
+parameterized**, and add two **String Parameter** entries:
+
+| Name | Default Value | Description |
+|---|---|---|
+| `BRANCH` | `main` or blank | Branch to check out and push the export to |
+| `WORKSPACE_NAME` | blank | Exact workspace database and schema name |
+
+Save the job. `Jenkinsfile.export` reads these job parameters; do not declare
+another set of parameters in the Pipeline.
+
+### Step 4: Run the export
+
+Click **Build with Parameters**, enter the target branch and exact workspace
+name, and start the build. The exporter replaces the DDL files and installer
+in that branch, commits only when generated files changed, and pushes the
+commit. If GitHub rejects the push, confirm that the SSH key has write access
+and that the branch permits direct pushes.
+
+The installer follows the dependency order emitted by PostgreSQL and retains
+the repository's object-type folders. PostgreSQL reconstructs stored
+definitions from the live database, so exported SQL may differ from the
+original source text used to create an object.
 
 Use synthetic data only. Do not store real employer, customer, or personal
 information in this lab.
